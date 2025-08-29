@@ -1,0 +1,29 @@
+version: "3.9"
+services:
+  api:
+    build: ./app/api
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  web:
+    build: ./app/web
+    env_file: .env
+    environment:
+      - API_URL=http://api:8000
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    restart: unless-stopped

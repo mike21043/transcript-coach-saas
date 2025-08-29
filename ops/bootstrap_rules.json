@@ -1,0 +1,30 @@
+[
+  {
+    "category": "Inclusivity",
+    "pattern": "\\b(crazy|insane|lame)\\b",
+    "guidance": "Avoid stigmatizing terms; be specific.",
+    "severity": "medium",
+    "priority": 1
+  },
+  {
+    "category": "Feedback",
+    "pattern": "\\b(always|never)\\b",
+    "guidance": "Avoid absolutes; provide concrete examples.",
+    "severity": "low",
+    "priority": 2
+  },
+  {
+    "category": "Leadership",
+    "pattern": "\\bI don't have time\\b",
+    "guidance": "Consider delegation and next steps.",
+    "severity": "low",
+    "priority": 3
+  },
+  {
+    "category": "PositiveCulture",
+    "pattern": "\\bthanks for helping\\b",
+    "guidance": "Encourage positive feedback regularly.",
+    "severity": "low",
+    "priority": 4
+  }
+]
