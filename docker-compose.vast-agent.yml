@@ -1,0 +1,16 @@
+
+services:
+  vast-agent:
+    build: ./ops/vast-agent
+    env_file: .env
+    volumes:
+      - ./data:/data
+    networks:
+      - default
+    restart: unless-stopped
+
+networks:
+  default:
+    name: transcript-coach-saas_default
+    external: true
+
