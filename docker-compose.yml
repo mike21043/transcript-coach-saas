@@ -1,0 +1,105 @@
+
+services:
+  redis:
+    image: redis:7
+    container_name: transcript-coach-saas-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - default
+
+  api:
+    build: ./api
+    container_name: transcript-coach-saas-api
+    volumes:
+      - /root/transcript-coach-saas/data:/data
+      - shared-data:/data/shared        # 👈 mount shared pCloud volume
+    environment:
+      - PYTHONUNBUFFERED=1
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+      - pcloud
+    networks:
+      - default
+
+  ui:
+    build: ./ui
+    container_name: transcript-coach-saas-ui
+    volumes:
+      - /root/transcript-coach-saas/data:/data
+      - shared-data:/data/shared        # 👈 mount shared pCloud volume
+    environment:
+      - CI=false
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+      - pcloud
+    networks:
+      - default
+
+  vast-agent:
+    build:
+      context: ./vast-agent
+      dockerfile: Dockerfile
+    container_name: transcript-coach-saas-vast-agent
+    env_file:
+      - .env
+    environment:
+      # keep your local redis connection for container-to-container
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+
+      # add these so vast_agent.py sees them
+      - PUBLIC_REDIS_URL=${PUBLIC_REDIS_URL}
+      - VAST_API_KEY=${VAST_API_KEY}
+      - VAST_TEMPLATE_HASH=${VAST_TEMPLATE_HASH}
+
+      # optional tuning knobs (use your defaults if redis config is missing)
+      - INSTANCE_DISK_GB=32
+      - INSTANCE_LABEL=TranscriptCoach GPU
+      - DEFAULT_IDLE_TIMEOUT=1800
+      - DEFAULT_STALE_TICKS=15
+    depends_on:
+      - redis
+    restart: always
+    networks:
+      - default
+
+
+  pcloud:
+    image: rclone/rclone:latest
+    container_name: transcript-coach-saas-pcloud
+    command: >
+      mount pcloudtc:/ /data/shared
+      --allow-other
+      --allow-non-empty
+      --buffer-size 64M
+      --dir-cache-time 1m
+      --vfs-cache-mode full
+      --vfs-cache-max-size 2G
+      --vfs-cache-poll-interval 1m
+    volumes:
+      - shared-data:/data/shared
+      - /root/.config/rclone/rclone.conf:/config/rclone.conf:ro   # 👈 correct file
+    environment:
+      - RCLONE_CONFIG=/config/rclone.conf
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    restart: always
+
+
+
+volumes:
+  shared-data:
+
+networks:
+  default:
+    driver: bridge

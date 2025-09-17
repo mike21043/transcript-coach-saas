@@ -1,0 +1,45 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Node.js (UI build)
+ui/node_modules/
+ui/build/
+ui/.next/
+
+# Docker
+*.log
+*.pid
+*.sock
+*.db
+*.sqlite3
+docker-data/
+data/
+models/
+
+# Hugging Face cache
+cache/
+huggingface/
+~/.cache/huggingface/
+
+# Local environment
+.env
+.env.local
+.env.*.backup
+
+# System files
+.DS_Store
+Thumbs.db

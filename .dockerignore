@@ -1,0 +1,16 @@
+# Reduce build context size
+.git
+.gitignore
+*.log
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+node_modules/
+ui/
+api/
+models/
+data/
+.cache/
+.DS_Store
