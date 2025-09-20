@@ -1,0 +1,25 @@
+{
+  "ts": "2025-09-19T12:37:40.706590Z",
+  "host_cwd": "/app",
+  "nvidia_smi": "/bin/sh: 1: nvidia-smi: not found\n",
+  "torch": {
+    "present": true,
+    "version": "2.5.1+cu124",
+    "cuda_available": false
+  },
+  "whisperx": {
+    "present": true,
+    "version": null
+  },
+  "pyannote": {
+    "present": true,
+    "version": null
+  },
+  "notes": [],
+  "env": {
+    "REDIS_URL": null,
+    "QUEUE_NAME": null,
+    "HF_TOKEN_masked": null,
+    "DO_DOWNLOAD_MODELS": false
+  }
+}

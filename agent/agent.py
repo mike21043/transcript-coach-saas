@@ -3,9 +3,8 @@ import os
 import json
 import redis
 import time
-import torch
-import whisperx
 import subprocess
+# Heavy ML libraries are imported lazily inside the functions that need them
 from typing import Dict, List
 from pyannote.audio import Pipeline, Model, Inference
 from pyannote.core import Segment
@@ -18,6 +17,10 @@ QUEUE_NAME = os.getenv("QUEUE_NAME", "transcript_jobs")
 DATA_DIR = "/data/results"
 UPLOADS_DIR = "/data/uploads"
 HF_TOKEN = os.getenv("HF_TOKEN", None)
+SKIP_EMBEDDINGS = os.getenv("SKIP_EMBEDDINGS", "0").lower() in ("1","true","yes")
+SKIP_DIARIZATION = os.getenv("SKIP_DIARIZATION", "0").lower() in ("1","true","yes")
+WHISPERX_SIZE = os.getenv("WHISPERX_SIZE", "small")
+AGENT_SMOKE = os.getenv("AGENT_SMOKE", "0").lower() in ("1","true","yes")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -40,26 +43,78 @@ def connect_redis():
 _whisperx_model = None
 def load_whisperx_model():
     global _whisperx_model
-    if _whisperx_model is None:
-        device_env = os.getenv("WHISPERX_DEVICE", "cuda")
-        device = device_env
+    # import heavy libs lazily to avoid top-level import cost
+    import torch
+    import whisperx
+    # Determine desired device and compute_type first (env-driven)
+    device_env = os.getenv("WHISPERX_DEVICE", "cuda")
+    device = device_env
 
-        if device_env == "cuda":
-            if torch.cuda.is_available():
-                try:
-                    sm = torch.cuda.get_device_capability()
-                    print(f"[Agent] CUDA device capability: {sm}")
-                except Exception as e:
-                    print(f"[Agent] Could not read compute capability: {e}")
-                device = "cuda"
-            else:
-                print("[Agent] CUDA not available, falling back to CPU for WhisperX.")
-                device = "cpu"
+    if device_env == "cuda":
+        if torch.cuda.is_available():
+            try:
+                sm = torch.cuda.get_device_capability()
+                print(f"[Agent] CUDA device capability: {sm}")
+            except Exception as e:
+                print(f"[Agent] Could not read compute capability: {e}")
+            device = "cuda"
         else:
+            print("[Agent] CUDA not available, falling back to CPU for WhisperX.")
             device = "cpu"
+    else:
+        device = "cpu"
 
-        print(f"[Agent] Loading WhisperX model on device: {device}")
-        _whisperx_model = whisperx.load_model("small", device=device)
+    # Decide compute type: allow override via WHISPERX_COMPUTE_TYPE
+    compute_type_env = os.getenv("WHISPERX_COMPUTE_TYPE", "").strip().lower()
+    if compute_type_env:
+        compute_type = compute_type_env
+    else:
+        # Default to float32 on CPU, float16 on CUDA
+        compute_type = "float32" if device == "cpu" else "float16"
+
+    # If a model is already loaded, try to inspect its device/dtype and reload if it doesn't match desired settings
+    if _whisperx_model is not None:
+        try:
+            candidate = _whisperx_model
+            inner = getattr(candidate, 'model', None) or getattr(candidate, 'whisper_model', None) or getattr(candidate, 'asr_model', None) or None
+            if inner is not None:
+                params = list(inner.parameters())
+                if params:
+                    p = params[0]
+                    p_dev = 'cuda' if p.device.type == 'cuda' else 'cpu'
+                    p_dtype = str(p.dtype).lower()
+                    desired_dtype_str = 'float16' if compute_type == 'float16' else 'float32'
+                    if p_dev == device and desired_dtype_str in p_dtype:
+                        # existing model matches desired device and dtype
+                        return _whisperx_model
+                    else:
+                        print(f"[Agent] Existing WhisperX model device/dtype mismatch (have {p_dev}/{p_dtype}, want {device}/{desired_dtype_str}), reloading.")
+                        _whisperx_model = None
+            else:
+                # Unknown internal structure — assume reload to be safe
+                print("[Agent] Could not introspect existing WhisperX model; reloading to enforce desired compute type.")
+                _whisperx_model = None
+        except Exception as e:
+            print(f"[Agent] Warning: failed to inspect existing WhisperX model: {e}; reloading to be safe.")
+            _whisperx_model = None
+
+    if _whisperx_model is None:
+        print(f"[Agent] Loading WhisperX model on device: {device} (compute_type={compute_type}, size={WHISPERX_SIZE})")
+        # Try loading with the selected compute_type; use WHISPERX_SIZE env var to control size
+        try:
+            _whisperx_model = whisperx.load_model(WHISPERX_SIZE, device=device, compute_type=compute_type)
+        except Exception as e:
+            print(f"[Agent] Warning: failed to load WhisperX with compute_type={compute_type}: {e}")
+            if compute_type != "float32":
+                try:
+                    print("[Agent] Retrying WhisperX load with compute_type=float32")
+                    _whisperx_model = whisperx.load_model(WHISPERX_SIZE, device=device, compute_type="float32")
+                except Exception as e2:
+                    print(f"[Agent] FATAL: failed to load WhisperX with compute_type=float32: {e2}")
+                    raise
+            else:
+                # Already tried float32 and failed
+                raise
 
     return _whisperx_model
 
@@ -153,6 +208,23 @@ def process_job(job: Dict, r: redis.Redis):
         r.set(result_key, json.dumps({"job_id": job_id, "status": "error", "error": err}))
         return
 
+    # Fast smoke-path (no ML) for quick mount/queue validation
+    if AGENT_SMOKE:
+        print(f"[Agent] AGENT_SMOKE enabled — writing quick result for {job_id}")
+        transcript = {
+            "job_id": job_id,
+            "filename": filename,
+            "segments": [{"text": "(smoke test)", "start": 0.0, "end": 1.0, "speaker": "unknown"}],
+            "embeddings": {},
+            "status": "completed",
+        }
+        outpath = os.path.join(DATA_DIR, f"{job_id}.json")
+        with open(outpath, "w", encoding="utf-8") as f:
+            json.dump(transcript, f, ensure_ascii=False)
+        r.set(result_key, json.dumps(transcript))
+        print(f"[Agent] AGENT_SMOKE: wrote {outpath} and set {result_key}")
+        return
+
     try:
         # Always convert audio to deterministic temp WAV
         wav_file = convert_to_wav(filepath, job_id)
@@ -163,18 +235,54 @@ def process_job(job: Dict, r: redis.Redis):
         asr = model.transcribe(audio)
         segments = asr.get("segments", [])
 
-        # Diarization
-        diarize = load_diarization_pipeline()
-        diar = diarize(wav_file)
-        segments = map_segments_with_speakers(segments, diar)
+        # Diarization (optional)
+        if SKIP_DIARIZATION:
+            print("[Agent] SKIP_DIARIZATION is set; skipping diarization.")
+            diar = None
+            # label segments without speaker info
+            labeled_segments = [
+                {
+                    "text": s.get("text", ""),
+                    "start": float(s.get("start", 0.0)),
+                    "end": float(s.get("end", 0.0)),
+                    "speaker": "unknown",
+                }
+                for s in segments
+            ]
+        else:
+            diarize = load_diarization_pipeline()
+            diar = diarize(wav_file)
+            labeled_segments = map_segments_with_speakers(segments, diar)
 
-        # Embeddings
-        embedding_inference = load_embedding_inference()
+        segments = labeled_segments
+
+        # Embeddings (optional). Can be skipped entirely with SKIP_EMBEDDINGS=1
         embeddings = {}
-        for turn, _, speaker in diar.itertracks(yield_label=True):
-            segment = Segment(turn.start, turn.end)
-            emb = embedding_inference.crop(wav_file, segment)
-            embeddings[speaker] = emb.tolist()  # tensor → list for JSON
+        if SKIP_EMBEDDINGS or diar is None:
+            if SKIP_EMBEDDINGS:
+                print("[Agent] SKIP_EMBEDDINGS is set; skipping embedding extraction.")
+            else:
+                print("[Agent] Diarization skipped; skipping embeddings.")
+            embeddings = {}
+        else:
+            # Embeddings: best-effort — if embedding extraction fails, continue
+            try:
+                embedding_inference = load_embedding_inference()
+                for turn, _, speaker in diar.itertracks(yield_label=True):
+                    segment = Segment(turn.start, turn.end)
+                    try:
+                        emb = embedding_inference.crop(wav_file, segment)
+                        # If emb is a tensor/ndarray-like, convert to list; otherwise store None
+                        try:
+                            embeddings[speaker] = emb.tolist()
+                        except Exception:
+                            embeddings[speaker] = None
+                    except Exception as e:
+                        print(f"[Agent] WARNING: failed to compute embedding for {speaker}: {e}")
+                        embeddings[speaker] = None
+            except Exception as e:
+                print(f"[Agent] WARNING: embedding inference setup failed: {e}")
+                embeddings = {}
 
         # Build transcript object
         transcript = {
