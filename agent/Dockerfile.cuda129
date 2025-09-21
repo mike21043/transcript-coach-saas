@@ -24,8 +24,13 @@ RUN pip install --upgrade pip setuptools wheel || true
 RUN if [ -f /app/requirements.txt ]; then pip install --only-binary av --no-cache-dir -r /app/requirements.txt; else echo "No requirements.txt in context; skipping pip install"; fi
 
 # Install torch wheel for CUDA 12.9 (assumption: torch 2.8.0 wheels with cu129 are available)
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu129 \
-    torch==2.8.0+cu129 torchaudio==2.8.0+cu129 torchvision==0.15.2+cu129 || true
+RUN set -eux; \
+        pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu129 \
+            torch==2.8.0+cu129 torchaudio==2.8.0+cu129 torchvision==0.15.2+cu129 || \
+        (echo "cu129 torchvision wheel not available, trying fallback..." && \
+            pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu129 \
+                torch==2.8.0+cu129 torchaudio==2.8.0+cu129 || \
+            echo "Warning: torchvision not installed for cu129; proceeding without pinned torchvision")
 
 # Ensure entry scripts are executable if present
 RUN [ -f /app/start.sh ] && chmod +x /app/start.sh || true
@@ -34,4 +39,6 @@ RUN [ -f /app/entrypoint.sh ] && chmod +x /app/entrypoint.sh || true
 # Ensure rclone config dir exists
 RUN mkdir -p /root/.config/rclone || true
 
-ENTRYPOINT ["/app/agent/entrypoint.sh"]
+# default entrypoint → use /app/entrypoint.sh and default cmd to /app/start.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/app/start.sh"]
