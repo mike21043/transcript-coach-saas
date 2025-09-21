@@ -25,6 +25,7 @@ import base64
 import tempfile
 import subprocess
 from pathlib import Path
+import re
 
 try:
     import requests
@@ -154,6 +155,37 @@ def main():
     template_hash = os.getenv("VAST_TEMPLATE_HASH")
     gh_pat = os.getenv("GITHUB_PAT")
 
+    # If required env vars are missing, attempt to load them from a .env file at repo root
+    def load_dotenv(path: Path):
+        if not path.exists():
+            return {}
+        env = {}
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            m = re.match(r'([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)', line)
+            if not m:
+                continue
+            k, v = m.group(1), m.group(2)
+            # strip optional surrounding quotes
+            if (v.startswith("\"") and v.endswith("\"")) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            env[k] = v
+        return env
+
+    repo_root = Path(__file__).resolve().parents[1]
+    dotenv = repo_root / '.env'
+    if dotenv.exists():
+        loaded = load_dotenv(dotenv)
+        # Only set env vars that are missing
+        if not vast_api_key and 'VAST_API_KEY' in loaded:
+            vast_api_key = loaded['VAST_API_KEY']
+        if not template_hash and 'VAST_TEMPLATE_HASH' in loaded:
+            template_hash = loaded['VAST_TEMPLATE_HASH']
+        if not gh_pat and 'GITHUB_PAT' in loaded:
+            gh_pat = loaded['GITHUB_PAT']
+
     if args.dry:
         print("Dry run: will not perform remote operations. Validating local steps...")
     else:
@@ -175,10 +207,29 @@ def main():
     repo = args.repo
 
     print(f"Generating runner user-data to: {tmp_path}")
-    subprocess.run(["/bin/bash", str(helper), owner, repo, tmp_path], check=True, cwd=str(repo_root))
+    if args.dry:
+        # Create a redacted user-data that mirrors what the helper would produce
+        cloud_init_path = repo_root / "ops" / "runner-cloud-init.sh"
+        if cloud_init_path.exists():
+            cloud_text = cloud_init_path.read_text()
+        else:
+            cloud_text = "# <missing ops/runner-cloud-init.sh>"
 
-    with open(tmp_path, 'rb') as f:
-        ud = f.read()
+        ud_text = (
+            "#!/bin/bash\n"
+            "export REG_TOKEN=REDACTED\n"
+            f"export REPO_URL='https://github.com/{owner}/{repo}'\n"
+            f"export RUNNER_LABELS='{args.runner_labels}'\n"
+            "# The ops/runner-cloud-init.sh will run and bootstrap the runner\n"
+            "bash -lc " + json.dumps(cloud_text)
+        )
+        with open(tmp_path, 'w') as f:
+            f.write(ud_text)
+        ud = ud_text.encode('utf-8')
+    else:
+        subprocess.run(["/bin/bash", str(helper), owner, repo, tmp_path], check=True, cwd=str(repo_root))
+        with open(tmp_path, 'rb') as f:
+            ud = f.read()
 
     ud_b64 = base64.b64encode(ud).decode('ascii')
     if len(ud_b64) > 1_000_000:
