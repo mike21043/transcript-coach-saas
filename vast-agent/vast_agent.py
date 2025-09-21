@@ -18,6 +18,8 @@ import requests
 import redis
 import subprocess
 import base64
+import tempfile
+from pathlib import Path
 
 # =========================
 # Static config / ENV
@@ -138,26 +140,52 @@ def create_instance_from_ask(ask_id: int, label_suffix: str, offer: Optional[dic
         provision_runner_flag = False
 
     if provision_runner_flag:
+        tmp_out = None
         try:
-            # Call helper script to request a registration token and render user-data
-            # The helper writes a user-data script; we'll read it, base64-encode and place into env
-            tmp_out = f"/tmp/runner-user-data-{label_suffix}.sh"
+            # Determine repo root and helper script path (work from repository root)
+            repo_root = Path(__file__).resolve().parents[1]
+            script_path = repo_root / "scripts" / "provision_runner.sh"
+
             owner = GITHUB_OWNER or "mike21043"
             repo = IMAGE_REPO or "transcript-coach-saas"
-            cmd = ["/bin/bash", "scripts/provision_runner.sh", owner, repo, tmp_out]
-            log.info(f"Provisioning runner user-data via: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
+
+            # Create a safe temporary file for the helper to write the user-data into
+            tf = tempfile.NamedTemporaryFile(prefix=f"runner-user-data-{label_suffix}-", suffix=".sh", delete=False)
+            tmp_out = tf.name
+            tf.close()
+
+            cmd = ["/bin/bash", str(script_path), owner, repo, tmp_out]
+            log.info(f"Provisioning runner user-data via: {' '.join(cmd)} (cwd={repo_root})")
+            # Run helper from repo root so relative paths inside the helper resolve correctly
+            subprocess.run(cmd, check=True, cwd=str(repo_root))
+
+            # Read generated user-data and embed (base64) into instance env. Protect against huge payloads.
             with open(tmp_out, 'rb') as f:
                 ud = f.read()
-            ud_b64 = base64.b64encode(ud).decode('ascii')
-            # Expose encoded user-data via env var; the Vast template's OnStart should decode/run it.
-            body.setdefault('env', {})
-            body['env']['RUNNER_USER_DATA_B64'] = ud_b64
-            # also hint labels for runner config script
-            body['env']['RUNNER_LABELS'] = 'self-hosted,cuda-test,transcript-coach'
-            log.info("Embedded runner user-data into instance env (base64)")
+
+            max_size = 1_000_000  # 1MB limit for embedding into env
+            if len(ud) > max_size:
+                log.warning(f"Runner user-data is large ({len(ud)} bytes) — skipping embedding; consider delivering via cloud-init or artifact.")
+            else:
+                ud_b64 = base64.b64encode(ud).decode('ascii')
+                body.setdefault('env', {})
+                body['env']['RUNNER_USER_DATA_B64'] = ud_b64
+
+                # Allow override of labels via env VAST_RUNNER_LABELS, otherwise use sensible defaults
+                labels = os.getenv("VAST_RUNNER_LABELS", "self-hosted,cuda-test,transcript-coach")
+                body['env']['RUNNER_LABELS'] = labels
+                log.info("Embedded runner user-data into instance env (base64) and set RUNNER_LABELS")
+        except subprocess.CalledProcessError as e:
+            log.warning(f"Provision helper failed (exit {e.returncode}): {e}")
         except Exception as e:
             log.warning(f"Failed to provision runner user-data: {e}")
+        finally:
+            # Best-effort cleanup of temp file
+            try:
+                if tmp_out and Path(tmp_out).exists():
+                    Path(tmp_out).unlink()
+            except Exception:
+                pass
 
     # IMAGE_MAP: optional env mapping keys to image tags. Format: "key1=ghcr.io/org/repo:tag1,key2=ghcr.io/org/repo:tag2"
     IMAGE_MAP_RAW = os.getenv("IMAGE_MAP", "")
