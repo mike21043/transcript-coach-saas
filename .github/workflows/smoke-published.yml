@@ -60,7 +60,8 @@ jobs:
   cuda_full_test:
     name: Full CUDA runtime test (self-hosted only)
     # This must run on a self-hosted runner with sufficient disk/GPU
-    runs-on: [self-hosted]
+    # Require the specific label 'cuda-test' so vast_agent can provision matching runners
+    runs-on: [self-hosted, cuda-test]
     needs: smoke_published
     if: github.event_name == 'workflow_dispatch'
     steps:
