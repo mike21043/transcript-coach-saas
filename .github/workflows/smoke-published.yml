@@ -1,10 +1,10 @@
-name: Smoke Published Images (minimal)
+name: Smoke Published Images
 
 on:
   workflow_dispatch: {}
 
 jobs:
-  smoke_published:
+  smoke:
     name: Smoke published images
     runs-on: ubuntu-latest
     services:
