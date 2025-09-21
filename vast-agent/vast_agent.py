@@ -16,6 +16,8 @@ from typing import Optional, Dict, Any, List
 
 import requests
 import redis
+import subprocess
+import base64
 
 # =========================
 # Static config / ENV
@@ -128,6 +130,34 @@ def create_instance_from_ask(ask_id: int, label_suffix: str, offer: Optional[dic
     }
     # If an explicit image was provided via VAST_IMAGE, include it; otherwise rely on the template (Ubuntu-only templates omit image)
     selected_image = IMAGE
+
+    # Optional: provision ephemeral GitHub self-hosted runner user-data and inject into instance env
+    try:
+        provision_runner_flag = os.getenv("VAST_PROVISION_RUNNER", "false").lower() in ("1", "true", "yes")
+    except Exception:
+        provision_runner_flag = False
+
+    if provision_runner_flag:
+        try:
+            # Call helper script to request a registration token and render user-data
+            # The helper writes a user-data script; we'll read it, base64-encode and place into env
+            tmp_out = f"/tmp/runner-user-data-{label_suffix}.sh"
+            owner = GITHUB_OWNER or "mike21043"
+            repo = IMAGE_REPO or "transcript-coach-saas"
+            cmd = ["/bin/bash", "scripts/provision_runner.sh", owner, repo, tmp_out]
+            log.info(f"Provisioning runner user-data via: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True)
+            with open(tmp_out, 'rb') as f:
+                ud = f.read()
+            ud_b64 = base64.b64encode(ud).decode('ascii')
+            # Expose encoded user-data via env var; the Vast template's OnStart should decode/run it.
+            body.setdefault('env', {})
+            body['env']['RUNNER_USER_DATA_B64'] = ud_b64
+            # also hint labels for runner config script
+            body['env']['RUNNER_LABELS'] = 'self-hosted,cuda-test,transcript-coach'
+            log.info("Embedded runner user-data into instance env (base64)")
+        except Exception as e:
+            log.warning(f"Failed to provision runner user-data: {e}")
 
     # IMAGE_MAP: optional env mapping keys to image tags. Format: "key1=ghcr.io/org/repo:tag1,key2=ghcr.io/org/repo:tag2"
     IMAGE_MAP_RAW = os.getenv("IMAGE_MAP", "")
