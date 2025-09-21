@@ -227,6 +227,16 @@ def main():
             f.write(ud_text)
         ud = ud_text.encode('utf-8')
     else:
+        # Ensure helper sees the GitHub PAT and owner/repo via environment
+        if gh_pat:
+            os.environ['GITHUB_PAT'] = gh_pat
+        if vast_api_key:
+            os.environ['VAST_API_KEY'] = vast_api_key
+        if template_hash:
+            os.environ['VAST_TEMPLATE_HASH'] = template_hash
+        os.environ['GITHUB_OWNER'] = owner
+        os.environ['IMAGE_REPO'] = repo
+
         subprocess.run(["/bin/bash", str(helper), owner, repo, tmp_path], check=True, cwd=str(repo_root))
         with open(tmp_path, 'rb') as f:
             ud = f.read()
