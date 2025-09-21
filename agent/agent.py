@@ -8,6 +8,8 @@ import subprocess
 from typing import Dict, List
 from pyannote.audio import Pipeline, Model, Inference
 from pyannote.core import Segment
+import base64
+import shlex
 
 # ==============================================================
 # Environment configuration
@@ -21,6 +23,8 @@ SKIP_EMBEDDINGS = os.getenv("SKIP_EMBEDDINGS", "0").lower() in ("1","true","yes"
 SKIP_DIARIZATION = os.getenv("SKIP_DIARIZATION", "0").lower() in ("1","true","yes")
 WHISPERX_SIZE = os.getenv("WHISPERX_SIZE", "small")
 AGENT_SMOKE = os.getenv("AGENT_SMOKE", "0").lower() in ("1","true","yes")
+RCLONE_CONFIG_PATH = os.getenv("RCLONE_CONFIG", os.path.expanduser("~/.config/rclone/rclone.conf"))
+RCLONE_CONFIG_CONTENT = os.getenv("RCLONE_CONFIG_CONTENT", None)
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -36,6 +40,94 @@ def connect_redis():
         print(f"[Agent] FATAL: Cannot connect to Redis at {REDIS_URL}: {e}")
         sys.exit(1)
     return r
+
+
+# ==============================================================
+# Rclone config helper and persistence
+# ==============================================================
+def _ensure_rclone_config():
+    """Ensure an rclone config exists at RCLONE_CONFIG_PATH.
+
+    Supports providing the file contents via RCLONE_CONFIG_CONTENT (base64 or raw).
+    """
+    try:
+        cfg_path = RCLONE_CONFIG_PATH
+        cfg_dir = os.path.dirname(cfg_path)
+        os.makedirs(cfg_dir, exist_ok=True)
+
+        if os.path.exists(cfg_path):
+            return cfg_path
+
+        content = RCLONE_CONFIG_CONTENT
+        if not content:
+            return None
+
+        # If the content looks like base64, try to decode; otherwise write raw
+        try:
+            decoded = base64.b64decode(content)
+            # check if decoded is valid utf-8
+            try:
+                decoded.decode('utf-8')
+                data = decoded
+            except Exception:
+                # not utf8, assume original content was raw
+                data = content.encode('utf-8')
+        except Exception:
+            data = content.encode('utf-8')
+
+        with open(cfg_path, 'wb') as f:
+            f.write(data)
+        print(f"[Agent] Wrote rclone config to {cfg_path}")
+        return cfg_path
+    except Exception as e:
+        print(f"[Agent] Could not ensure rclone config: {e}")
+        return None
+
+
+def _run_rclone_copy(src: str, dest: str) -> None:
+    """Run rclone copy src -> dest. dest should be an rclone remote path like "remote:bucket/path".
+
+    Uses RCLONE_CONFIG_PATH if present.
+    """
+    cfg = _ensure_rclone_config()
+    cmd = ["rclone", "copy", src, dest, "-v"]
+    if cfg:
+        cmd.extend(["--config", cfg])
+    print(f"[Agent] Running: {' '.join(shlex.quote(x) for x in cmd)}")
+    subprocess.run(cmd, check=True)
+
+
+def persist_results(local_path: str) -> None:
+    """Persist a file or directory of results.
+
+    Strategy:
+    - If RCLONE_REMOTE is set, attempt rclone copy <local_path> -> <RCLONE_REMOTE>/<basename>
+    - If rclone is not available or fails, fall back to making a timestamped backup under /data/backups
+    """
+    rclone_remote = os.getenv("RCLONE_REMOTE", "")
+    if rclone_remote:
+        try:
+            base = os.path.basename(local_path)
+            dest = f"{rclone_remote.rstrip('/')}/{base}"
+            _run_rclone_copy(local_path, dest)
+            print(f"[Agent] Persisted {local_path} -> {dest} via rclone")
+            return
+        except Exception as e:
+            print(f"[Agent] rclone persist failed: {e}")
+
+    # Fallback: local backup
+    try:
+        backup_dir = os.path.join("/data/backups", time.strftime("%Y%m%d-%H%M%S"))
+        os.makedirs(backup_dir, exist_ok=True)
+        if os.path.isdir(local_path):
+            # copy tree
+            subprocess.run(["cp", "-a", local_path, backup_dir], check=True)
+        else:
+            subprocess.run(["cp", local_path, backup_dir], check=True)
+        print(f"[Agent] Copied {local_path} to local backup {backup_dir}")
+    except Exception as e:
+        print(f"[Agent] FATAL: could not persist results locally: {e}")
+        raise
 
 # ==============================================================
 # WhisperX model loader (lazy, with device selection & fallback)
@@ -299,7 +391,12 @@ def process_job(job: Dict, r: redis.Redis):
             json.dump(transcript, f, ensure_ascii=False)
         print(f"[Agent] Saved transcript to {outpath}")
 
-        # Save to Redis
+        # Persist results (upload/backups) and Save to Redis
+        try:
+            persist_results(outpath)
+        except Exception as e:
+            print(f"[Agent] WARNING: persist_results failed: {e}")
+
         r.set(result_key, json.dumps(transcript))
         print(f"[Agent] Job {job_id} completed.")
 

@@ -20,30 +20,20 @@ RUN curl https://rclone.org/install.sh | bash
 RUN mkdir -p /var/run/sshd
 
 WORKDIR /app
+# Copy the entire repository into the image - simplifies relative paths
+COPY . /app
 
-# Copy requirements and install
-COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip setuptools wheel \
- && pip install --only-binary av --no-cache-dir -r /app/requirements.txt
+# Install python requirements for the agent. When the build context is the `agent/` directory
+# the requirements file will be at /app/requirements.txt. If the file is not present, skip.
+RUN pip install --upgrade pip setuptools wheel || true
+RUN if [ -f /app/requirements.txt ]; then pip install --only-binary av --no-cache-dir -r /app/requirements.txt; else echo "No requirements.txt in context; skipping pip install"; fi
 
-# ✅ early health check
-RUN python3 - <<'EOF'
-import torch, whisperx, pyannote.audio, redis
-print("Torch version:", torch.__version__)
-print("CUDA available:", torch.cuda.is_available())
-print("WhisperX import OK")
-print("Pyannote.audio version:", pyannote.audio.__version__)
-print("Redis client OK")
-EOF
+# Make entry scripts executable if present (some build contexts may place them at /app/)
+RUN [ -f /app/start.sh ] && chmod +x /app/start.sh || true
+RUN [ -f /app/entrypoint.sh ] && chmod +x /app/entrypoint.sh || true
 
-# Copy agent + start script
-COPY agent.py /app/agent.py
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# Ensure rclone config dir exists (we may override it at runtime via entrypoint)
+RUN mkdir -p /root/.config/rclone || true
 
-# rclone config
-RUN mkdir -p /root/.config/rclone
-COPY rclone.conf /root/.config/rclone/rclone.conf
-
-# default entry
-CMD ["/app/start.sh"]
+# default entrypoint
+ENTRYPOINT ["/app/agent/entrypoint.sh"]

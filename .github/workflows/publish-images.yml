@@ -20,12 +20,15 @@ jobs:
 
       - name: Build & push default image (GHCR)
         run: |
-          docker build -t ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest -f ./agent/Dockerfile .
+          # Use the agent/ directory as the build context so Dockerfile COPY lines that expect files
+          # relative to the agent directory will work (some Dockerfiles reference files like start.sh).
+          docker build -t ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest -f ./agent/Dockerfile ./agent
           docker push ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest
 
       - name: Build & push cuda129 image (GHCR)
         run: |
-          docker build -t ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129 -f ./agent/Dockerfile.cuda129 .
+          # Use the agent/ directory as the build context for the cuda129 Dockerfile as well.
+          docker build -t ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129 -f ./agent/Dockerfile.cuda129 ./agent
           docker push ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
 
       - name: Optionally push to Docker Hub

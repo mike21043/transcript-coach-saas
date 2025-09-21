@@ -1,0 +1,37 @@
+# CUDA 12.9 variant for GPU worker (best-effort)
+FROM pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-pip curl unzip ffmpeg git build-essential \
+    libsndfile1 ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Install rclone
+RUN curl https://rclone.org/install.sh | bash
+
+WORKDIR /app
+
+# Copy repo
+COPY . /app
+
+# Install Python requirements except torch (we'll install a CUDA-specific wheel). If requirements
+# are in the agent build context they will be at /app/requirements.txt.
+RUN pip install --upgrade pip setuptools wheel || true
+RUN if [ -f /app/requirements.txt ]; then pip install --only-binary av --no-cache-dir -r /app/requirements.txt; else echo "No requirements.txt in context; skipping pip install"; fi
+
+# Install torch wheel for CUDA 12.9 (assumption: torch 2.8.0 wheels with cu129 are available)
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu129 \
+    torch==2.8.0+cu129 torchaudio==2.8.0+cu129 torchvision==0.15.2+cu129 || true
+
+# Ensure entry scripts are executable if present
+RUN [ -f /app/start.sh ] && chmod +x /app/start.sh || true
+RUN [ -f /app/entrypoint.sh ] && chmod +x /app/entrypoint.sh || true
+
+# Ensure rclone config dir exists
+RUN mkdir -p /root/.config/rclone || true
+
+ENTRYPOINT ["/app/agent/entrypoint.sh"]

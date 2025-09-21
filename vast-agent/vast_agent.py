@@ -25,7 +25,22 @@ VAST_BASE = "https://console.vast.ai/api/v0"
 # From your .env
 VAST_API_KEY       = os.getenv("VAST_API_KEY", "").strip()
 TEMPLATE_HASH      = os.getenv("VAST_TEMPLATE_HASH", "").strip()
-IMAGE              = os.getenv("VAST_IMAGE", "ghcr.io/mikesilen/transcript-coach-agent:v3")
+# Allow explicit override via VAST_IMAGE. If not provided, build a GHCR path from GITHUB_OWNER/IMAGE_REPO
+VAST_IMAGE_ENV     = os.getenv("VAST_IMAGE")
+GITHUB_OWNER       = os.getenv("GITHUB_OWNER") or os.getenv("IMAGE_REPO_OWNER") or os.getenv("IMAGE_REPO")
+IMAGE_REPO         = os.getenv("IMAGE_REPO", "transcript-coach-agent")
+
+# Default image selection logic:
+# - If VAST_IMAGE env is set, use it verbatim
+# - Else if GITHUB_OWNER (or IMAGE_REPO_OWNER) is set, derive ghcr.io/<owner>/<repo>:cuda129
+# - Else fall back to a hard-coded ghcr path used historically
+if VAST_IMAGE_ENV:
+    IMAGE = VAST_IMAGE_ENV
+else:
+    owner = GITHUB_OWNER or "mikesilen"
+    image_name = IMAGE_REPO
+    # prefer cuda129 variant for modern CUDA hosts
+    IMAGE = f"ghcr.io/{owner}/{image_name}:cuda129"
 
 REDIS_URL          = os.getenv("PUBLIC_REDIS_URL", "redis://38.242.200.197:6379/0")
 QUEUE_NAME         = os.getenv("QUEUE_NAME", "transcript_jobs")
@@ -99,7 +114,7 @@ def pick_best_offer(offers: List[dict]) -> Optional[dict]:
         return None
     return sorted(offers, key=score_offer, reverse=False)[0]
 
-def create_instance_from_ask(ask_id: int, label_suffix: str) -> int:
+def create_instance_from_ask(ask_id: int, label_suffix: str, offer: Optional[dict] = None) -> int:
     label = f"{INSTANCE_LABEL}-{label_suffix}"
     body: Dict[str, Any] = {
         "disk": INSTANCE_DISK_GB,
@@ -110,8 +125,27 @@ def create_instance_from_ask(ask_id: int, label_suffix: str) -> int:
         },
         "target_state": "running",
         "template_hash": TEMPLATE_HASH,
-        "image": IMAGE,
     }
+    # If an explicit image was provided via VAST_IMAGE, include it; otherwise rely on the template (Ubuntu-only templates omit image)
+    selected_image = IMAGE
+
+    # IMAGE_MAP: optional env mapping keys to image tags. Format: "key1=ghcr.io/org/repo:tag1,key2=ghcr.io/org/repo:tag2"
+    IMAGE_MAP_RAW = os.getenv("IMAGE_MAP", "")
+    if IMAGE_MAP_RAW and offer:
+        try:
+            # parse into dict
+            m = dict(x.split("=", 1) for x in IMAGE_MAP_RAW.split(",") if "=" in x)
+            offer_text = str(offer)
+            for k, v in m.items():
+                if k.strip() and k.strip().lower() in offer_text.lower():
+                    selected_image = v.strip()
+                    log.info(f"Selecting image from IMAGE_MAP: key={k} -> {selected_image}")
+                    break
+        except Exception as e:
+            log.warning(f"Failed to parse IMAGE_MAP: {e}")
+
+    if selected_image:
+        body["image"] = selected_image
     res = _req("PUT", f"/asks/{ask_id}/", body)
     newc = res.get("new_contract")
 
