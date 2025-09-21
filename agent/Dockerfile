@@ -35,5 +35,6 @@ RUN [ -f /app/entrypoint.sh ] && chmod +x /app/entrypoint.sh || true
 # Ensure rclone config dir exists (we may override it at runtime via entrypoint)
 RUN mkdir -p /root/.config/rclone || true
 
-# default entrypoint
-ENTRYPOINT ["/app/agent/entrypoint.sh"]
+# default entrypoint → use /app/entrypoint.sh and default cmd to /app/start.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/app/start.sh"]

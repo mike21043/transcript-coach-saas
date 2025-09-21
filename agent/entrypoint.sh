@@ -26,4 +26,4 @@ if [ -n "${RCLONE_REMOTE:-}" ]; then
 fi
 
 # Exec the original start script (should start the agent process)
-exec /app/agent/start.sh
+exec /app/start.sh
