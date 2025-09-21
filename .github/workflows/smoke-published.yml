@@ -1,3 +1,49 @@
+name: Smoke test published images
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  smoke_published:
+    name: Smoke published images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (needed for workspace path)
+        uses: actions/checkout@v4
+
+      - name: Ensure Docker available
+        run: docker version
+
+      - name: Pull and run smoke for latest
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/mike21043/transcript-coach-agent:latest
+          echo "Pulling $IMG"
+          docker pull "$IMG"
+          mkdir -p "$RUNNER_TEMP/smoke_latest"
+          echo "Running smoke for $IMG"
+          docker run --rm -e AGENT_SMOKE=1 -v "$RUNNER_TEMP/smoke_latest":/data/results "$IMG"
+          echo "Contents of smoke dir:"; ls -la "$RUNNER_TEMP/smoke_latest" || true
+          echo "Smoke JSON:"; cat "$RUNNER_TEMP/smoke_latest/smoke_result.json"
+
+      - name: Pull and run smoke for cuda129
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/mike21043/transcript-coach-agent:cuda129
+          echo "Pulling $IMG"
+          docker pull "$IMG"
+          mkdir -p "$RUNNER_TEMP/smoke_cuda129"
+          echo "Running smoke for $IMG"
+          docker run --rm -e AGENT_SMOKE=1 -v "$RUNNER_TEMP/smoke_cuda129":/data/results "$IMG"
+          echo "Contents of smoke dir:"; ls -la "$RUNNER_TEMP/smoke_cuda129" || true
+          echo "Smoke JSON:"; cat "$RUNNER_TEMP/smoke_cuda129/smoke_result.json"
+
+      - name: Validate JSONs
+        run: |
+          set -euo pipefail
+          jq -e . "$RUNNER_TEMP/smoke_latest/smoke_result.json" >/dev/null
+          jq -e . "$RUNNER_TEMP/smoke_cuda129/smoke_result.json" >/dev/null
+          echo "Both smoke_result.json files are valid JSON."
 name: Smoke Published Images
 
 on:
