@@ -1,0 +1,34 @@
+name: CI - Build & Smoke
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant: [ default, cuda129 ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Dockerfile and image tag
+        run: |
+          if [ "${{ matrix.variant }}" = "cuda129" ]; then
+            echo "DOCKERFILE=./agent/Dockerfile.cuda129" >> $GITHUB_ENV
+            echo "IMAGE_TAG=transcript-coach-worker:ci-cuda129" >> $GITHUB_ENV
+          else
+            echo "DOCKERFILE=./agent/Dockerfile" >> $GITHUB_ENV
+            echo "IMAGE_TAG=transcript-coach-worker:ci" >> $GITHUB_ENV
+          fi
+
+      - name: Build Docker image
+        run: |
+          docker build -t "$IMAGE_TAG" -f "$DOCKERFILE" .
+
+      - name: Run smoke container
+        run: |
+          docker run --rm -e AGENT_SMOKE=1 -v ${{ runner.temp }}/uploads:/data/uploads -v ${{ runner.temp }}/results:/data/results "$IMAGE_TAG"

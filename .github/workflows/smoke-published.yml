@@ -1,0 +1,42 @@
+name: Smoke Published Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      owner:
+        description: 'GitHub owner/org (defaults to repository owner)'
+        required: false
+      tag:
+        description: 'Image tag to test (e.g. cuda129 or latest)'
+        required: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare image name
+        run: |
+          OWNER=${{ github.event.inputs.owner || github.repository_owner }}
+          TAG=${{ github.event.inputs.tag }}
+          echo "IMAGE=ghcr.io/${OWNER}/transcript-coach-agent:${TAG}" >> $GITHUB_ENV
+
+      - name: Pull published image
+        run: |
+          docker pull "$IMAGE"
+
+      - name: Run AGENT_SMOKE and verify Redis key
+        env:
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          docker run --rm -e AGENT_SMOKE=1 -e REDIS_URL=redis://redis:6379/0 "$IMAGE" &
+          sleep 6
+          docker run --rm --network host redis:7 redis-cli -h 127.0.0.1 -p 6379 GET result:smoke || (echo "Result missing" && exit 1)

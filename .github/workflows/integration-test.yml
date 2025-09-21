@@ -1,0 +1,31 @@
+name: Integration - Agent job roundtrip
+
+on:
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build -t transcript-coach-worker:integration -f ./agent/Dockerfile .
+
+      - name: Run agent container in smoke mode and confirm Redis key
+        env:
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          docker run --rm -e AGENT_SMOKE=1 -e REDIS_URL=redis://redis:6379/0 transcript-coach-worker:integration &
+          sleep 5
+          # verify Redis has the key
+          docker run --rm --network host redis:7 redis-cli -h 127.0.0.1 -p 6379 GET result:smoke || (echo "Result missing" && exit 1)
