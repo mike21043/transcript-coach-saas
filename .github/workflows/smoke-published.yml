@@ -1,3 +1,60 @@
+name: Smoke Published Images (minimal)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  smoke_published:
+    name: Smoke published images
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Docker available
+        run: docker version
+
+      - name: Create docker network for smoke test
+        run: |
+          set -euo pipefail
+          docker network create smoke-net || true
+
+      - name: Start redis on smoke-net
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name smoke-redis --network smoke-net redis:7
+
+      - name: Smoke test latest image
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest
+          docker pull "$IMG"
+          docker run --rm --name smoke-latest --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
+          docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for latest" && exit 1)
+
+      - name: Smoke test cuda129 image
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
+          docker pull "$IMG"
+          docker run --rm --name smoke-cuda --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
+          docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for cuda129" && exit 1)
+
+      - name: Cleanup smoke network
+        if: always()
+        run: |
+          docker rm -f smoke-redis || true
+          docker network rm smoke-net || true
+
+      - name: Success
+        run: echo "Smoke tests passed for both images"
 name: Smoke test published images
 
 on:
