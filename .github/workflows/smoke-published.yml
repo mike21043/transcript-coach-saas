@@ -1,99 +1,25 @@
-name: Quick smoke parser test
+name: Smoke published images
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
-  smoke:
-    name: Smoke Published Images
-
-    on:
-      workflow_dispatch: {}
-
-    jobs:
-      smoke_published:
-        name: Smoke published images
-        runs-on: ubuntu-latest
-        services:
-          redis:
-            image: redis:7
-            ports:
-              - 6379:6379
-            options: >-
-              --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
-        steps:
-          - name: Checkout
-            uses: actions/checkout@v4
-
-          - name: Ensure Docker available
-            run: docker version
-
-          - name: Create docker network for smoke test
-            run: |
-              set -euo pipefail
-              docker network create smoke-net || true
-
-          - name: Start redis on smoke-net
-            run: |
-              set -euo pipefail
-              docker run -d --rm --name smoke-redis --network smoke-net redis:7
-
-          - name: Smoke test latest image
-            run: |
-              set -euo pipefail
-              IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest
-              docker pull "$IMG"
-              docker run --rm --name smoke-latest --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
-              docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for latest" && exit 1)
-
-          - name: Smoke test cuda129 image
-            run: |
-              set -euo pipefail
-              IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
-              docker pull "$IMG"
-              docker run --rm --name smoke-cuda --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
-              docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for cuda129" && exit 1)
-
-          - name: Cleanup smoke network
-            if: always()
-            run: |
-              docker rm -f smoke-redis || true
-              docker network rm smoke-net || true
-
-          - name: Success
-            run: echo "Smoke tests passed for both images"
-                  docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for latest" && exit 1)
-
-              - name: Smoke test cuda129 image
-                run: |
-                  set -euo pipefail
-                  IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
-                  echo "Pulling $IMG"
-                  docker pull "$IMG"
-                  echo "Running $IMG on smoke-net"
-                  docker run --rm --name smoke-cuda --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
-                  echo "Querying redis for result key..."
-                  docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for cuda129" && exit 1)
-
-              - name: Cleanup smoke network
-                if: always()
-                run: |
-                  docker rm -f smoke-redis || true
-                  docker network rm smoke-net || true
-
-              - name: Success
-                run: echo "Smoke tests passed for both images"
+  smoke_published:
+    name: Smoke published images
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ensure Docker is available
+      - name: Ensure Docker available
         run: docker version
-
-      - name: Login to GHCR (optional)
-        if: ${{ secrets.GHCR_TOKEN != '' }}
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-        run: |
-          echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
 
       - name: Create docker network for smoke test
         run: |
@@ -108,23 +34,17 @@ jobs:
       - name: Smoke test latest image
         run: |
           set -euo pipefail
-          IMG=ghcr.io/mike21043/transcript-coach-agent:latest
-          echo "Pulling $IMG"
+          IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest
           docker pull "$IMG"
-          echo "Running $IMG on smoke-net"
           docker run --rm --name smoke-latest --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
-          echo "Querying redis for result key..."
           docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for latest" && exit 1)
 
       - name: Smoke test cuda129 image
         run: |
           set -euo pipefail
-          IMG=ghcr.io/mike21043/transcript-coach-agent:cuda129
-          echo "Pulling $IMG"
+          IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
           docker pull "$IMG"
-          echo "Running $IMG on smoke-net"
           docker run --rm --name smoke-cuda --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
-          echo "Querying redis for result key..."
           docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for cuda129" && exit 1)
 
       - name: Cleanup smoke network
