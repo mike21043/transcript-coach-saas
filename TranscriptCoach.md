@@ -399,7 +399,34 @@ docker system prune -a --volumes -f
    - Clear job status polling, line breaks between speakers, download buttons for JSON/SRT/TXT/CSV.
 
 6. **Diarization & coaching**
-   - Integrate Pyannote; persist speaker profiles; store transcripts in DB for future LLM coaching.
+  - Integrate Pyannote; persist speaker profiles; store transcripts in DB for future LLM coaching.
+  - Output requirements (explicit): when an audio job is processed the agent MUST produce speaker-separated transcripts and speaker embeddings (voiceprints):
+    - Speaker-separated transcript files (per job):
+      - `<job_id>.speakers.json` — JSON array of speaker segments with timestamps and text. Example schema:
+        ```json
+        [
+          {"speaker": "spk_0", "start": 0.12, "end": 3.45, "text": "Hello, I'm Alice."},
+          {"speaker": "spk_1", "start": 3.46, "end": 6.12, "text": "Hi Alice, this is Bob."}
+        ]
+        ```
+      - `<job_id>.speakers.srt` — SRT file with speaker labels for playback.
+    - Speaker embeddings (voiceprints):
+      - `<job_id>.speaker_embeddings.json` — mapping of speaker id to embedding vector (float array), plus metadata (model, dimension, generation time). Example schema:
+        ```json
+        {
+          "model": "pyannote/embedding",
+          "dim": 192,
+          "generated_at": "2025-09-21T19:30:00Z",
+          "embeddings": {
+            "spk_0": [0.00123, -0.0004, ...],
+            "spk_1": [0.00211, -0.0017, ...]
+          }
+        }
+        ```
+    - Contract notes:
+      - Speaker ids must be stable within a job (e.g., `spk_0`, `spk_1`). If cross-job speaker linking is required later, add a canonical speaker UUID to each profile.
+      - Store these files in `/data/results/` with the job prefix so UI and downstream LLM coaching components can retrieve them reliably.
+      - If embeddings are computed remotely (e.g., HF models), ensure `HF_TOKEN` is available to the agent or provide a secure embedding service.
 
 7. **Autoscaling**
    - Expand *vast-agent* to launch/stop GPUs based on queue depth & staleness.
