@@ -11,25 +11,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GHCR (use GHCR_TOKEN if set)
+        run: |
+          # Prefer an explicit PAT with write:packages permission stored in GHCR_TOKEN.
+          if [ -n "${{ secrets.GHCR_TOKEN }}" ]; then
+            echo "Logging in to GHCR with GHCR_TOKEN"
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          else
+            echo "GHCR_TOKEN not set; attempting login with GITHUB_TOKEN (may be restricted)"
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin || true
+          fi
 
       - name: Build & push default image (GHCR)
         run: |
-          # Use the agent/ directory as the build context so Dockerfile COPY lines that expect files
-          # relative to the agent directory will work (some Dockerfiles reference files like start.sh).
+          # Build using agent/ as the context
           docker build -t ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest -f ./agent/Dockerfile ./agent
-          docker push ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest
+          # Only push to GHCR if GHCR_TOKEN is provided (safer for orgs where GITHUB_TOKEN lacks package write)
+          if [ -z "${{ secrets.GHCR_TOKEN }}" ]; then
+            echo "GHCR_TOKEN not provided; skipping push to GHCR. To publish, create a PAT with 'write:packages' (and repo if private) and add it as the GHCR_TOKEN secret."
+            echo "See: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry"
+          else
+            docker push ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:latest
+          fi
 
       - name: Build & push cuda129 image (GHCR)
         run: |
-          # Use the agent/ directory as the build context for the cuda129 Dockerfile as well.
           docker build -t ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129 -f ./agent/Dockerfile.cuda129 ./agent
-          docker push ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
+          if [ -z "${{ secrets.GHCR_TOKEN }}" ]; then
+            echo "GHCR_TOKEN not provided; skipping push to GHCR for cuda129 image."
+          else
+            docker push ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
+          fi
 
       - name: Optionally push to Docker Hub
         env:
