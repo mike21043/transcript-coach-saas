@@ -12,64 +12,52 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Ensure docker is available
-        run: docker version
+        name: Smoke test published images
 
-      - name: Create docker network
-        run: |
-          set -euo pipefail
-          docker network create smoke-net || true
+        on:
+          workflow_dispatch: {}
 
-      - name: Start redis on smoke-net
-        run: |
-          set -euo pipefail
-          docker run -d --rm --name smoke-redis --network smoke-net redis:7
+        jobs:
+          smoke:
+            name: Smoke published images
+            runs-on: ubuntu-latest
+            steps:
+              - name: Checkout
+                uses: actions/checkout@v4
 
-      - name: Smoke test latest image
-        run: |
-          set -euo pipefail
-          IMG=ghcr.io/mike21043/transcript-coach-agent:latest
-          echo "Pulling $IMG"
-          docker pull "$IMG"
-          echo "Running smoke for $IMG"
-          docker run --rm --name smoke-latest --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
-          echo "Checking redis for result:"
-          docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for latest" && exit 1)
+              - name: Ensure docker
+                run: docker version
 
-      - name: Smoke test cuda129 image
-        run: |
-          set -euo pipefail
-          IMG=ghcr.io/mike21043/transcript-coach-agent:cuda129
-          echo "Pulling $IMG"
-          docker pull "$IMG"
-          echo "Running smoke for $IMG"
-          docker run --rm --name smoke-cuda --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
-          echo "Checking redis for result:"
-          docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for cuda129" && exit 1)
+              - name: Create network and start redis
+                run: |
+                  set -euo pipefail
+                  docker network create smoke-net || true
+                  docker run -d --rm --name smoke-redis --network smoke-net redis:7
 
-      - name: Cleanup
-        if: always()
-        run: |
-          docker rm -f smoke-redis || true
-          docker network rm smoke-net || true
+              - name: Smoke latest
+                run: |
+                  set -euo pipefail
+                  IMG=ghcr.io/mike21043/transcript-coach-agent:latest
+                  docker pull "$IMG"
+                  docker run --rm --name smoke-latest --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
+                  docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for latest" && exit 1)
 
-      - name: Success
-        run: echo "Smoke tests passed"
-name: Smoke test published images
+              - name: Smoke cuda129
+                run: |
+                  set -euo pipefail
+                  IMG=ghcr.io/mike21043/transcript-coach-agent:cuda129
+                  docker pull "$IMG"
+                  docker run --rm --name smoke-cuda --network smoke-net -e AGENT_SMOKE=1 -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG"
+                  docker run --rm --network smoke-net redis:7 redis-cli -h smoke-redis -p 6379 GET result:smoke || (echo "Result missing for cuda129" && exit 1)
 
-on:
-  workflow_dispatch: {}
+              - name: Cleanup
+                if: always()
+                run: |
+                  docker rm -f smoke-redis || true
+                  docker network rm smoke-net || true
 
-jobs:
-  smoke_published_images:
-    name: Smoke published images (GHCR)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Ensure Docker is available
-        run: docker version
-
+              - name: Success
+                run: echo "Smoke tests passed"
       - name: Login to GHCR (optional)
         if: ${{ secrets.GHCR_TOKEN != '' }}
         env:
