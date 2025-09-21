@@ -56,3 +56,83 @@ jobs:
 
       - name: Success
         run: echo "Smoke tests passed for both images"
+
+  cuda_full_test:
+    name: Full CUDA runtime test (self-hosted only)
+    # This must run on a self-hosted runner with sufficient disk/GPU
+    runs-on: [self-hosted]
+    needs: smoke_published
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Docker available
+        run: docker version
+
+      - name: Prepare test audio & results dir
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/data/uploads" "$GITHUB_WORKSPACE/data/results"
+          # Copy any repository test audio into uploads (repo contains test.wav)
+          if [ -f "$GITHUB_WORKSPACE/test.wav" ]; then cp "$GITHUB_WORKSPACE/test.wav" "$GITHUB_WORKSPACE/data/uploads/test.wav"; fi
+
+      - name: Create docker network for cuda full test
+        run: |
+          set -euo pipefail
+          docker network create smoke-net-cuda || true
+
+      - name: Start redis on smoke-net-cuda
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name smoke-redis --network smoke-net-cuda --network-alias smoke-redis -p 6379:6379 redis:7
+
+      - name: Pull CUDA image
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
+          docker pull "$IMG"
+
+      - name: Enqueue test job in redis
+        run: |
+          set -euo pipefail
+          # job payload: ensure filename matches the uploaded file above
+          PAYLOAD='{"job_id":"smoke_cuda","filename":"test.wav"}'
+          docker run --rm --network smoke-net-cuda redis:7 redis-cli -h smoke-redis -p 6379 lpush transcript_jobs "$PAYLOAD"
+
+      - name: Run agent container (detached)
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/${{ github.repository_owner }}/transcript-coach-agent:cuda129
+          docker run -d --rm --name smoke-cuda --network smoke-net-cuda -v "$GITHUB_WORKSPACE/data:/data" -e REDIS_URL=redis://smoke-redis:6379/0 "$IMG" || true
+
+      - name: Wait for result file (up to 15 minutes)
+        run: |
+          set -euo pipefail
+          timeout=900
+          interval=6
+          elapsed=0
+          RESULT_FILE="$GITHUB_WORKSPACE/data/results/smoke_cuda.done.json"
+          echo "Waiting for result file: $RESULT_FILE"
+          while [ $elapsed -lt $timeout ]; do
+            if [ -f "$RESULT_FILE" ]; then
+              echo "Result file found"; exit 0
+            fi
+            sleep $interval
+            elapsed=$((elapsed + interval))
+            echo "waiting... $elapsed/$timeout"
+          done
+          echo "Timed out waiting for result file"; docker logs smoke-cuda || true; exit 1
+
+      - name: Collect container logs
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logs smoke-cuda > "$GITHUB_WORKSPACE/data/results/smoke_cuda.container.log" || true
+
+      - name: Cleanup cuda test network & containers
+        if: always()
+        run: |
+          docker rm -f smoke-redis || true
+          docker rm -f smoke-cuda || true
+          docker network rm smoke-net-cuda || true
