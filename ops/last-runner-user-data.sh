@@ -1,4 +1,9 @@
 #!/bin/bash
+export REG_TOKEN=REDACTED
+export REPO_URL='https://github.com/mike21043/transcript-coach-saas'
+export RUNNER_LABELS='self-hosted,cuda-test,transcript-coach'
+# The ops/runner-cloud-init.sh will run and bootstrap the runner
+bash -lc '#!/bin/bash
 # Cloud-init style startup script for ephemeral GitHub self-hosted runner
 # This template expects the following environment variables to be substituted
 # before instance creation:
@@ -8,19 +13,6 @@
 
 set -euo pipefail
 
-# ensure SUDO_USER has a sensible default when run via cloud-init
-SUDO_USER=${SUDO_USER:-ubuntu}
-
-# bootstrap logging: capture stdout/stderr to a persistent file for diagnostics
-LOG_FILE="/var/log/runner-bootstrap.log"
-mkdir -p "$(dirname "$LOG_FILE")"
-touch "$LOG_FILE"
-chown root:root "$LOG_FILE"
-chmod 644 "$LOG_FILE"
-# tee the log so we can still see console output in instance logs
-exec > >(tee -a "$LOG_FILE") 2>&1
-set -x
-
 # Basic OS packages
 apt-get update
 apt-get install -y ca-certificates curl jq git tar build-essential
@@ -28,7 +20,7 @@ apt-get install -y ca-certificates curl jq git tar build-essential
 # Install Docker
 if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
-  usermod -aG docker "$SUDO_USER" || true
+  usermod -aG docker $SUDO_USER || true
 fi
 
 # Install NVIDIA container toolkit if GPU present (best-effort)
@@ -67,13 +59,12 @@ fi
 : "${RUNNER_LABELS:=self-hosted,cuda-test}"
 
 # Configure and install as service
-# Let config.sh fail loudly so the provisioning harness can detect and fetch logs for debugging.
-./config.sh --unattended --url "$REPO_URL" --token "$REG_TOKEN" --labels "$RUNNER_LABELS" --work _work
+./config.sh --unattended --url "$REPO_URL" --token "$REG_TOKEN" --labels "$RUNNER_LABELS" --work _work || true
 ./svc.sh install
 ./svc.sh start
 
 # Ensure cleanup on shutdown
-cat > /usr/local/bin/runner-cleanup.sh <<'EOF'
+cat > /usr/local/bin/runner-cleanup.sh <<'''EOF'''
 #!/bin/bash
 set -euo pipefail
 cd "$WORKDIR"
@@ -83,7 +74,7 @@ EOF
 chmod +x /usr/local/bin/runner-cleanup.sh
 
 # Hook into shutdown
-cat > /etc/systemd/system/runner-cleanup.service <<'EOF'
+cat > /etc/systemd/system/runner-cleanup.service <<'''EOF'''
 [Unit]
 Description=Cleanup GitHub runner on shutdown
 DefaultDependencies=no
@@ -100,4 +91,4 @@ EOF
 systemctl daemon-reload
 systemctl enable runner-cleanup.service || true
 
-# End of cloud-init script
+# End of cloud-init script'

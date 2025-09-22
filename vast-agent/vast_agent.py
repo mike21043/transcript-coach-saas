@@ -54,6 +54,17 @@ INSTANCE_LABEL     = os.getenv("INSTANCE_LABEL", "TranscriptCoach GPU")
 
 MIN_GPUS           = int(os.getenv("MIN_GPUS", "1"))
 ONLY_VERIFIED      = os.getenv("ONLY_VERIFIED", "true").lower() == "true"
+# Country filtering: comma-separated ISO or name fragments. Default to US and CA (North America)
+VAST_ALLOWED_COUNTRIES = [c.strip().lower() for c in os.getenv("VAST_ALLOWED_COUNTRIES", "US").split(",") if c.strip()]
+VAST_EXCLUDE_COUNTRIES = [c.strip().lower() for c in os.getenv("VAST_EXCLUDE_COUNTRIES", "CN,CHN,PRC,CHINA").split(",") if c.strip()]
+_price_env = os.getenv('priceInstanceHourlyMax') or os.getenv('PRICE_INSTANCE_HOURLY_MAX') or os.getenv('VAST_PRICE_INSTANCE_HOURLY_MAX')
+# Default budget cap is $0.30/hr unless overridden
+if not _price_env:
+    _price_env = '0.30'
+try:
+    PRICE_INSTANCE_HOURLY_MAX = float(_price_env)
+except Exception:
+    PRICE_INSTANCE_HOURLY_MAX = None
 
 # Loop cadence: 20s to match your old controller
 LOOP_INTERVAL      = int(os.getenv("LOOP_INTERVAL", "20"))
@@ -93,6 +104,34 @@ def _req(method: str, path: str, body: Optional[dict] = None) -> dict:
     except Exception:
         return {"raw": r.text, "status": r.status_code}
 
+
+def _head_manifest(image: str, timeout: int = 10) -> bool:
+    """Return True if the image manifest is accessible anonymously (200)."""
+    try:
+        # Expect image in form [registry/]repo/name:tag
+        if ':' in image and '/' in image:
+            # split tag
+            img, tag = image.rsplit(':', 1)
+        else:
+            img = image
+            tag = 'latest'
+
+        if '/' not in img:
+            # docker hub shorthand (library/...) — don't try here
+            return True
+
+        # registry is first component if it contains a dot
+        parts = img.split('/', 1)
+        registry = parts[0] if ('.' in parts[0] or ':' in parts[0]) else 'registry-1.docker.io'
+        repo = parts[1] if len(parts) > 1 else parts[0]
+
+        url = f"https://{registry}/v2/{repo}/manifests/{tag}"
+        headers = {"Accept": "application/vnd.docker.distribution.manifest.v2+json"}
+        resp = requests.head(url, headers=headers, timeout=timeout)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
 # =========================
 # Vast API
 # =========================
@@ -104,19 +143,165 @@ def search_offers() -> List[dict]:
     }
     if ONLY_VERIFIED:
         q["verified"] = {"eq": True}
+    # include machineCountries if provided (Vast API accepts country filters)
+    allowed_raw = [c.strip() for c in os.getenv('VAST_ALLOWED_COUNTRIES', 'US,CA').split(',') if c.strip()]
+    # Note: machineCountries/machine_countries filters can be rejected by the API; we'll filter client-side below
+    # apply budget cap if configured
+    # We'll apply any price cap client-side to avoid API query rejections
 
     res = _req("PUT", "/search/asks/", {"q": q})
     offers = res.get("offers", []) or res.get("matches", []) or []
-    return offers
 
-def score_offer(o: dict) -> float:
-    dlpusd = float(o.get("dlperf_usd") or 0)
-    return dlpusd if dlpusd > 0 else 1e9  # smaller is better
+    # Filter offers by allowed/excluded countries if present
+    def country_ok(o: dict) -> bool:
+        mc = str(o.get("machine_country") or o.get("country") or "").lower()
+        if not mc:
+            return True
+        # exclude explicit excludes first
+        for ex in VAST_EXCLUDE_COUNTRIES:
+            if ex and ex in mc:
+                return False
+        if VAST_ALLOWED_COUNTRIES:
+            for allow in VAST_ALLOWED_COUNTRIES:
+                if allow and allow in mc:
+                    return True
+            return False
+        return True
+
+    filtered = [o for o in offers if country_ok(o)]
+    # Apply client-side price cap if configured
+    try:
+        if PRICE_INSTANCE_HOURLY_MAX is not None:
+            def price_ok(o: dict) -> bool:
+                # try several fields that may contain hourly pricing
+                for k in ('price_hour_usd', 'price', 'price_usd'):
+                    if k in o and o.get(k) is not None:
+                        try:
+                            return float(o.get(k)) <= float(PRICE_INSTANCE_HOURLY_MAX)
+                        except Exception:
+                            continue
+                # fallback to nested search.totalHour or dph_total
+                try:
+                    s = o.get('search') or {}
+                    if s and s.get('totalHour') is not None:
+                        return float(s.get('totalHour')) <= float(PRICE_INSTANCE_HOURLY_MAX)
+                except Exception:
+                    pass
+                try:
+                    if o.get('dph_total') is not None:
+                        return float(o.get('dph_total')) <= float(PRICE_INSTANCE_HOURLY_MAX)
+                except Exception:
+                    pass
+                # if price couldn't be determined, be conservative and reject
+                return False
+
+            filtered = [o for o in filtered if price_ok(o)]
+    except Exception:
+        log.warning('Price filtering failed; proceeding without price cap')
+    if not filtered:
+        log.info(f"No offers matched strict VAST_ALLOWED_COUNTRIES={VAST_ALLOWED_COUNTRIES} and PRICE_INSTANCE_HOURLY_MAX={PRICE_INSTANCE_HOURLY_MAX}; attempting progressive fallback")
+
+        # Progressive fallback config
+        PRICE_STEP = float(os.getenv('PRICE_STEP', '0.10'))
+        PRICE_MAX_FALLBACK = float(os.getenv('PRICE_MAX_FALLBACK', str(PRICE_INSTANCE_HOURLY_MAX + 0.40 if PRICE_INSTANCE_HOURLY_MAX else 0.50)))
+        FALLBACK_COUNTRIES = [c.strip().lower() for c in os.getenv('VAST_ALLOWED_COUNTRIES_FALLBACK', 'CA').split(',') if c.strip()]
+
+        def price_ok_dynamic(o, cap):
+            for k in ('price_hour_usd', 'price', 'price_usd'):
+                if k in o and o.get(k) is not None:
+                    try:
+                        return float(o.get(k)) <= cap
+                    except Exception:
+                        continue
+            try:
+                s = o.get('search') or {}
+                if s and s.get('totalHour') is not None:
+                    return float(s.get('totalHour')) <= cap
+            except Exception:
+                pass
+            try:
+                if o.get('dph_total') is not None:
+                    return float(o.get('dph_total')) <= cap
+            except Exception:
+                pass
+            return False
+
+        # step price up incrementally
+        current = PRICE_INSTANCE_HOURLY_MAX or 0.30
+        while current < PRICE_MAX_FALLBACK:
+            current = round(current + PRICE_STEP, 2)
+            cand = [o for o in offers if country_ok(o) and price_ok_dynamic(o, current)]
+            if cand:
+                log.info(f"Found {len(cand)} offers by increasing price cap to ${current}/hr")
+                return cand
+
+        # expand allowed countries slightly
+        if FALLBACK_COUNTRIES:
+            expanded_allowed = VAST_ALLOWED_COUNTRIES + FALLBACK_COUNTRIES
+            def country_ok_wide(o: dict) -> bool:
+                mc = str(o.get("machine_country") or o.get("country") or "").lower()
+                if not mc:
+                    return False
+                for ex in VAST_EXCLUDE_COUNTRIES:
+                    if ex and ex in mc:
+                        return False
+                return any(a in mc for a in expanded_allowed)
+            cand = [o for o in offers if country_ok_wide(o) and (PRICE_INSTANCE_HOURLY_MAX is None or price_ok_dynamic(o, PRICE_INSTANCE_HOURLY_MAX))]
+            if cand:
+                log.info(f"Found {len(cand)} offers by expanding allowed countries to: {expanded_allowed}")
+                return cand
+
+        log.warning('Progressive fallback did not find any acceptable offers; returning empty list')
+        return []
+    return filtered
+
+def score_offer(o: dict) -> tuple:
+    # Return a tuple key to sort offers by: (price, gpu_mismatch, perf)
+    # - price: lower is better
+    # - gpu_mismatch: 0 if exact match to VAST_NUM_GPUS, else 1 (prefer exact matches)
+    # - perf: dlperf_usd-like value as tiebreaker (lower better)
+    def price(o: dict) -> float:
+        for k in ('price_hour_usd', 'price', 'price_usd'):
+            v = o.get(k)
+            try:
+                if v is not None:
+                    return float(v)
+            except Exception:
+                continue
+        try:
+            s = o.get('search') or {}
+            if s and s.get('totalHour') is not None:
+                return float(s.get('totalHour'))
+        except Exception:
+            pass
+        try:
+            if o.get('dph_total') is not None:
+                return float(o.get('dph_total'))
+        except Exception:
+            pass
+        return 1e9
+
+    def perf(o: dict) -> float:
+        try:
+            return float(o.get('dlperf_usd') or o.get('dlperf_usd_per_hour') or o.get('dlperf_usd_per_sec') or 1e9)
+        except Exception:
+            return 1e9
+
+    p = price(o)
+    q = perf(o)
+    try:
+        desired = int(os.getenv('VAST_NUM_GPUS', str(MIN_GPUS)))
+        g = int(o.get('num_gpus') or 0)
+    except Exception:
+        desired = MIN_GPUS
+        g = int(o.get('num_gpus') or 0)
+    gpu_mismatch = 0 if g == desired else 1
+    return (p, gpu_mismatch, q)
 
 def pick_best_offer(offers: List[dict]) -> Optional[dict]:
     if not offers:
         return None
-    return sorted(offers, key=score_offer, reverse=False)[0]
+    return sorted(offers, key=score_offer)[0]
 
 def create_instance_from_ask(ask_id: int, label_suffix: str, offer: Optional[dict] = None) -> int:
     label = f"{INSTANCE_LABEL}-{label_suffix}"
@@ -202,9 +387,36 @@ def create_instance_from_ask(ask_id: int, label_suffix: str, offer: Optional[dic
         except Exception as e:
             log.warning(f"Failed to parse IMAGE_MAP: {e}")
 
+    # verify accessibility for registry-hosted images (e.g. ghcr.io)
+    fallback_img = os.getenv("VAST_FALLBACK_IMAGE", "ubuntu:22.04")
+    try:
+        if selected_image and ('ghcr.io' in selected_image or ('/' in selected_image and '.' in selected_image.split('/')[0])):
+            ok = _head_manifest(selected_image)
+            if not ok:
+                log.warning(f"Image {selected_image} not publicly accessible; falling back to {fallback_img}")
+                selected_image = fallback_img
+    except Exception as e:
+        log.warning(f"Image accessibility check failed: {e}; proceeding with requested image")
+
     if selected_image:
         body["image"] = selected_image
-    res = _req("PUT", f"/asks/{ask_id}/", body)
+
+    # attempt create; if server rejects template-related args, retry without template_hash
+    try:
+        res = _req("PUT", f"/asks/{ask_id}/", body)
+    except Exception as e:
+        msg = str(e)
+        log.warning(f"Initial create attempt failed: {msg}. Trying again without template_hash if applicable.")
+        # remove template_hash and retry once
+        if 'template_hash' in body:
+            body.pop('template_hash', None)
+            try:
+                res = _req("PUT", f"/asks/{ask_id}/", body)
+            except Exception as e2:
+                log.error(f"Retry without template_hash also failed: {e2}")
+                raise
+        else:
+            raise
     newc = res.get("new_contract")
 
     if isinstance(newc, dict):
