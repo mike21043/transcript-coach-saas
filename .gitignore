@@ -43,3 +43,5 @@ huggingface/
 # System files
 .DS_Store
 Thumbs.db
+
+rclone.conf

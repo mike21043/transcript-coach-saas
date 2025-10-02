@@ -77,7 +77,7 @@ When the job completes and you have persisted results, stop the container or ter
 
 - Add automated CI (GitHub Actions) to build & publish images for known CUDA variations. This repo includes a publish workflow at `.github/workflows/publish-images.yml` which will build and push two tags to GitHub Container Registry (GHCR): `ghcr.io/<owner>/transcript-coach-agent:latest` and `ghcr.io/<owner>/transcript-coach-agent:cuda129`. The workflow triggers on push tags (e.g. `v1.2.3` or `release-...`).
 
-- Add a deploy script to the controller that chooses the correct image per GPU type. The `vast-agent` controller defaults to using a `:cuda129` tag when no explicit `VAST_IMAGE` is provided; you can override this with `VAST_IMAGE` or by setting `IMAGE_REPO`/`GITHUB_OWNER` environment variables (see below).
+  - Add a deploy script to the controller that chooses the correct image per GPU type. The `vast_agent` controller defaults to using a `:cuda129` tag when no explicit `VAST_IMAGE` is provided; you can override this with `VAST_IMAGE` or by setting `IMAGE_REPO`/`GITHUB_OWNER` environment variables (see below).
 
 Publishing the images (how-to)
 
@@ -93,7 +93,7 @@ When the workflow runs it will build both image variants and push them to GHCR u
 
 Using the published image in the controller
 
-The `vast-agent` controller looks for an environment variable `VAST_IMAGE` to explicitly set the container image used when creating instances. If not provided it will attempt to prefer the `:cuda129` variant from GHCR. To explicitly reference the published GHCR image, set `VAST_IMAGE` like:
+The `vast_agent` controller looks for an environment variable `VAST_IMAGE` to explicitly set the container image used when creating instances. If not provided it will attempt to prefer the `:cuda129` variant from GHCR. To explicitly reference the published GHCR image, set `VAST_IMAGE` like:
 
 ```bash
 export VAST_IMAGE=ghcr.io/<your-github-username-or-org>/transcript-coach-agent:cuda129
@@ -101,18 +101,7 @@ export VAST_IMAGE=ghcr.io/<your-github-username-or-org>/transcript-coach-agent:c
 
 If you'd rather let the controller derive the owner from an environment variable, set `IMAGE_REPO` or `GITHUB_OWNER` and leave `VAST_IMAGE` unset; the controller will build a GHCR image path from that information.
 
-Example controller env for Vast provisioning:
+This file has been consolidated. See `DEVELOPER.md` for the canonical developer guide and deployment instructions.
+
 
 ```bash
-export VAST_API_KEY="<your-vast-key>"
-export TEMPLATE_HASH="<your-template-hash>"
-export GITHUB_OWNER="<your-github-username-or-org>"
-export VAST_IMAGE="ghcr.io/${GITHUB_OWNER}/transcript-coach-agent:cuda129"
-export PUBLIC_REDIS_URL="redis://<host>:6379/0"
-```
-
-Notes
-
-- GHCR publishing uses the built-in `GITHUB_TOKEN` to authenticate; ensure your repository's Actions permissions allow writing packages/containers. For publishing to other registries (DockerHub, ECR) update the workflow to use the appropriate login step and secrets.
-- If you expect other CUDA variants (for older GPUs) add more Dockerfiles and extend the publish workflow's build steps accordingly.
-

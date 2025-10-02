@@ -41,11 +41,11 @@ services:
     networks:
       - default
 
-  vast-agent:
+  vast_agent: # canonical service name; runs the controller. The controller is provided by the `vast_agent` package (run as `python -m vast_agent.vast_agent`)
     build:
-      context: ./vast-agent
+      context: ./vast_agent
       dockerfile: Dockerfile
-    container_name: transcript-coach-saas-vast-agent
+    container_name: transcript-coach-saas-vast_agent
     env_file:
       - .env
     environment:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Wrapper to run the vast-agent controller locally.
+# Wrapper to run the vast_agent controller locally.
 # Usage:
 #   VAST_API_KEY=... VAST_TEMPLATE_HASH=... [VAST_IMAGE=...] bash ops/run_vast_create.sh
 
@@ -17,7 +17,7 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON=${PYTHON:-python3}
 
-echo "Running vast-agent controller..."
+echo "Running vast_agent controller..."
 echo "  TEMPLATE_HASH=${VAST_TEMPLATE_HASH}"
 if [ -n "${VAST_IMAGE:-}" ]; then
   echo "  VAST_IMAGE=${VAST_IMAGE}"
@@ -25,5 +25,5 @@ else
   echo "  VAST_IMAGE not set; will rely on template image/config"
 fi
 
-# Run the controller
-exec "$PYTHON" "$REPO_ROOT/vast-agent/vast_agent.py"
+# Run the packaged controller module
+exec "$PYTHON" -m vast_agent.vast_agent

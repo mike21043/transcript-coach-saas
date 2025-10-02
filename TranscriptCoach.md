@@ -1,8 +1,6 @@
-# Transcript Coach — Deep Research Handoff & Status (as of 2025-09-21)
+This file has been consolidated into `DEVELOPER.md`. Please open `DEVELOPER.md` in the repository root for the canonical developer guide and runbook.
 
-> **Project alias**: Transcript Coach / Listening Coach / TranscriptCoach SaaS  
-> **Owner**: Michael (Mike) Silen — *finance exec & builder; prefers precise, step-by-step, “full replacements”, explicit server labels, and short logs.*  
-> **Primary goal**: A cloud-based transcription + coaching platform using WhisperX + diarization, with GPU workers and a queue-driven pipeline, UI for uploads & results, and eventually coaching/LLM analysis over persisted transcripts.
+For historical details, see `README_DEPRECATED.md`.
 
 ---
 
@@ -59,7 +57,7 @@
   - **Runs**: Agent Worker (PyTorch/WhisperX/diarization) via `docker-compose.gpu.yml`.
   - **Connects to**: Redis on Main (`redis://38.242.200.197:6379/0`).
   - **Volumes**: Binds `./data:/data` (host path on GPU), meant to be mirrored or synchronized to Main via pCloud.
-  - **Controller**: Optional *vast-agent* process that watches queue and manages Vast.ai GPUs (re-using instance when available).
+  - **Controller**: Optional *vast_agent* process that watches queue and manages Vast.ai GPUs (re-using instance when available).
 
 - **Storage / Sync**: **pCloud via rclone**
   - Goal: Single source of truth for `/data/uploads` and `/data/results` across Main and GPU.
@@ -89,10 +87,10 @@
   - **CUDA**: e.g., “CUDA Version 12.2.2” observed.  
   - **Data**: `/root/transcript-coach-saas/data` (mapped to `/data` in containers)
 
-### 2.2 Containers (examples from logs)
+-### 2.2 Containers (examples from logs)
 
 - `transcript-coach-saas-api` — FastAPI/uvicorn, exposes `/upload`.  
-- `transcript-coach-saas-vast-agent` — Vast controller loop (optional orchestrator).  
+- `transcript-coach-saas-vast_agent` — Vast controller loop (optional orchestrator).  
 - `transcript-coach-saas-agent` — Worker that loads WhisperX/cuda, listens on `transcript_jobs`.  
 - Redis — listens on `0.0.0.0:6379` on Main.
 
@@ -138,7 +136,7 @@
 - **Action needed**: Always use **Main** IP when running Redis CLI remotely; label commands by **Main vs GPU**.
 
 ### 3.4 Vast.ai controller & GPU lifecycle
-- *vast-agent* loop shows **reusing instance** and **stale counter** increments; ensure lifecycle matches queue length and idle shutdown strategy.
+- *vast_agent* loop shows **reusing instance** and **stale counter** increments; ensure lifecycle matches queue length and idle shutdown strategy.
 
 ---
 
@@ -429,7 +427,7 @@ docker system prune -a --volumes -f
       - If embeddings are computed remotely (e.g., HF models), ensure `HF_TOKEN` is available to the agent or provide a secure embedding service.
 
 7. **Autoscaling**
-   - Expand *vast-agent* to launch/stop GPUs based on queue depth & staleness.
+  - Expand *vast_agent* to launch/stop GPUs based on queue depth & staleness.
 
 ---
 

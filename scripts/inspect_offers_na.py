@@ -43,6 +43,42 @@ def vast_search_offers(token, min_gpus=1, only_verified=True):
     return r.json().get('offers', [])
 
 
+def get_offer_price(o):
+    # Robust extraction of an offer's hourly price. Return None if unknown.
+    # Check common top-level fields first, then nested 'search' and 'instance' dicts,
+    # then known dph/dph_total fields.
+    keys = ('price_hour_usd', 'price', 'price_usd', 'discounted_hourly', 'discounted_dph_total')
+    for k in keys:
+        if k in o and o.get(k) is not None:
+            try:
+                v = float(o.get(k))
+                # treat zero or negative as missing so we can fall back to computed fields
+                if v > 1e-8:
+                    return v
+            except Exception:
+                continue
+    s = o.get('search') or {}
+    for k in ('totalHour', 'gpuCostPerHour', 'total_hour'):
+        if k in s and s.get(k) is not None:
+            try:
+                return float(s.get(k))
+            except Exception:
+                pass
+    inst = o.get('instance') or {}
+    if inst.get('totalHour') is not None:
+        try:
+            return float(inst.get('totalHour'))
+        except Exception:
+            pass
+    for k in ('dph_total', 'dph_total_adj', 'dph_base', 'discounted_hourly'):
+        if k in o and o.get(k) is not None:
+            try:
+                return float(o.get(k))
+            except Exception:
+                pass
+    return None
+
+
 def score(o):
     # Prefer lower absolute hourly price first, then dlperf_usd as tiebreaker
     def get_price(o):
@@ -80,8 +116,11 @@ def score(o):
 
 
 def print_offer(o):
-    keys = ['id','ask_id','num_gpus','gpu_model','machine_country','machine_city','price_hour_usd','price','dph_total','os','version','is_offer_verified','is_offer_compatible','is_host_secure','template_hash']
+    keys = ['id','ask_id','num_gpus','gpu_model','machine_country','machine_city','os','version','is_offer_verified','is_offer_compatible','is_host_secure','template_hash']
     out = {k: o.get(k) for k in keys if k in o}
+    # include a canonical price field for readability
+    price = get_offer_price(o)
+    out['hourly_price_usd'] = price if price is not None else 'n/a'
     print(json.dumps(out, indent=2))
     # print some status-related fields if present
     extras = {}
@@ -158,10 +197,10 @@ def main():
         return True
 
     def price_ok(o):
-        try:
-            p = float(o.get('price_hour_usd') or o.get('price') or o.get('price_usd') or 0)
-        except Exception:
-            p = 0
+        p = get_offer_price(o)
+        if p is None:
+            # conservatively reject offers with unknown price
+            return False
         return p <= price_cap
 
     filtered = [o for o in filtered if country_ok_offer(o) and price_ok(o)]

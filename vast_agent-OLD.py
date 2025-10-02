@@ -32,7 +32,7 @@ def start_gpu():
                          json={"template_id": GPU_TEMPLATE_ID})
     resp.raise_for_status()
     GPU_INSTANCE_ID = resp.json()["id"]
-    print(f"[vast-agent] Launched GPU instance {GPU_INSTANCE_ID}")
+    print(f"[vast_agent] Launched GPU instance {GPU_INSTANCE_ID}")
 
 def stop_gpu():
     global GPU_INSTANCE_ID
@@ -41,18 +41,18 @@ def stop_gpu():
     resp = requests.put(f"{VAST_BASE}/instances/{GPU_INSTANCE_ID}/stop/",
                         headers={"Authorization": f"Bearer {VAST_API_KEY}"})
     resp.raise_for_status()
-    print(f"[vast-agent] Stopped GPU instance {GPU_INSTANCE_ID}")
+    print(f"[vast_agent] Stopped GPU instance {GPU_INSTANCE_ID}")
     GPU_INSTANCE_ID = None
 
 # ======================
 # Main loop
 # ======================
 if __name__ == "__main__":
-    print("[vast-agent] Starting Vast.ai controller loop...")
+    print("[vast_agent] Starting Vast.ai controller loop...")
     while True:
         try:
             qlen = queue_len()
-            print(f"[vast-agent] Queue length: {qlen}")
+            print(f"[vast_agent] Queue length: {qlen}")
 
             if qlen > 0:
                 IDLE_TICKS = 0
@@ -61,12 +61,12 @@ if __name__ == "__main__":
             else:
                 if GPU_INSTANCE_ID:
                     IDLE_TICKS += 1
-                    print(f"[vast-agent] Idle tick {IDLE_TICKS}/{MAX_IDLE_TICKS}")
+                    print(f"[vast_agent] Idle tick {IDLE_TICKS}/{MAX_IDLE_TICKS}")
                     if IDLE_TICKS >= MAX_IDLE_TICKS:
                         stop_gpu()
                         IDLE_TICKS = 0
 
         except Exception as e:
-            print(f"[vast-agent] ERROR: {e}")
+            print(f"[vast_agent] ERROR: {e}")
 
         time.sleep(30)

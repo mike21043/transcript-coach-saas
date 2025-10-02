@@ -1,5 +1,7 @@
 # Runner provisioning quick guide
 
+This file has been consolidated into `DEVELOPER.md`. Please open `DEVELOPER.md` in the repository root for the canonical runner provisioning instructions.
+
 This file explains how to generate and test the GitHub Actions self-hosted runner user-data used by `vast_agent`.
 
 Prerequisites
