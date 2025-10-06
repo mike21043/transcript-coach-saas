@@ -5,11 +5,14 @@ export RUNNER_LABELS='self-hosted,cuda-test,transcript-coach'
 # The ops/runner-cloud-init.sh will run and bootstrap the runner
 bash -lc '#!/bin/bash
 # Cloud-init style startup script for ephemeral GitHub self-hosted runner
-# This template expects the following environment variables to be substituted
+# The cloud-init expects the following environment variables to be substituted
 # before instance creation:
 #   - REG_TOKEN  : GitHub registration token (short lived)
 #   - REPO_URL   : https://github.com/<owner>/<repo>
 #   - RUNNER_LABELS : comma-separated labels (e.g., "self-hosted,cuda-test,transcript-coach")
+#
+# Prefer delivering runner user-data via a pointer (RUNNER_USER_DATA_URL) or an
+# embedded base64 (RUNNER_USER_DATA_B64).
 
 set -euo pipefail
 

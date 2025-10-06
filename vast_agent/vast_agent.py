@@ -41,6 +41,12 @@ wait_until_running = vast_utils.wait_until_running
 fetch_console_and_decode = vast_utils.fetch_console_and_decode
 score_offer = vast_utils.score_offer
 
+# The controller historically called wait_until_running(inst_id, timeout_sec=...)
+# directly; vast_utils.wait_until_running requires the API key first. Provide a
+# thin wrapper with the historic signature for compatibility.
+def wait_until_running(inst_id: int, timeout_sec: int = 900) -> bool:
+    return vast_utils.wait_until_running(os.getenv('VAST_API_KEY', ''), inst_id, timeout_sec)
+
 # The rest of the controller logic is shared with the original file. To
 # avoid duplicating the whole file here (and keep history clear) we import
 # the implementation from the old script if present, otherwise we provide
@@ -54,7 +60,6 @@ VAST_BASE = "https://console.vast.ai/api/v0"
 
 # From your .env
 VAST_API_KEY       = os.getenv("VAST_API_KEY", "").strip()
-TEMPLATE_HASH      = os.getenv("VAST_TEMPLATE_HASH", "").strip()
 VAST_IMAGE_ENV     = os.getenv("VAST_IMAGE")
 GITHUB_OWNER       = os.getenv("GITHUB_OWNER") or os.getenv("IMAGE_REPO_OWNER") or os.getenv("IMAGE_REPO")
 IMAGE_REPO         = os.getenv("IMAGE_REPO", "transcript-coach-agent")
@@ -69,7 +74,7 @@ else:
 REDIS_URL          = os.getenv("PUBLIC_REDIS_URL", "redis://38.242.200.197:6379/0")
 QUEUE_NAME         = os.getenv("QUEUE_NAME", "transcript_jobs")
 
-PROVISION_MODE_ENV = os.getenv("PROVISION_MODE", "").strip()
+PROVISION_MODE_ENV = os.getenv("PROVISION_MODE", "").strip() or 'image'
 INSTANCE_DISK_GB   = int(os.getenv("INSTANCE_DISK_GB", "32"))
 INSTANCE_LABEL     = os.getenv("INSTANCE_LABEL", "TranscriptCoach GPU")
 
@@ -200,26 +205,18 @@ def create_instance_from_ask(ask_id: int, label_suffix: str, offer: Optional[dic
     except Exception as e:
         log.warning(f"Image accessibility check failed: {e}; proceeding with requested image")
 
-    mode = (PROVISION_MODE_ENV or os.getenv('PROVISION_MODE', '')).strip().lower() or 'bootstrap'
-    if mode == 'template' and TEMPLATE_HASH:
-        body['template_hash'] = TEMPLATE_HASH
-    if mode == 'image' and selected_image:
+    # Only 'image' provisioning is supported now. Prefer explicit env override
+    # or the GHCR-derived default image.
+    mode = (PROVISION_MODE_ENV or os.getenv('PROVISION_MODE', '')).strip().lower() or 'image'
+    if selected_image:
         body['image'] = selected_image
 
     try:
         res = vast_utils.vast_req("PUT", f"/asks/{ask_id}/", os.getenv('VAST_API_KEY', ''), body)
     except Exception as e:
         msg = str(e)
-        log.warning(f"Initial create attempt failed: {msg}. Trying again without template_hash if applicable.")
-        if 'template_hash' in body:
-            body.pop('template_hash', None)
-            try:
-                res = vast_utils.vast_req("PUT", f"/asks/{ask_id}/", os.getenv('VAST_API_KEY', ''), body)
-            except Exception as e2:
-                log.error(f"Retry without template_hash also failed: {e2}")
-                raise
-        else:
-            raise
+        log.error(f"Create attempt failed: {msg}")
+        raise
 
     newc = res.get("new_contract")
     if isinstance(newc, dict):
@@ -239,8 +236,12 @@ def create_instance_from_ask(ask_id: int, label_suffix: str, offer: Optional[dic
 def controller_loop():
     # Minimal wrapper that reuses vast_utils.search_offers, pick_best_offer, etc.
     log.info("Starting Vast.ai controller loop (packaged)...")
-    if (PROVISION_MODE_ENV or os.getenv('PROVISION_MODE', '')).strip().lower() == 'template' and not TEMPLATE_HASH:
-        raise RuntimeError("VAST_TEMPLATE_HASH is required when PROVISION_MODE=template")
+    # Debugging: log the effective Redis and Queue configuration so we can
+    # verify the controller is connected to the intended Redis instance.
+    try:
+        log.info(f"Effective REDIS_URL={os.getenv('REDIS_URL')} PUBLIC_REDIS_URL={os.getenv('PUBLIC_REDIS_URL')} QUEUE_NAME={os.getenv('QUEUE_NAME', 'transcript_jobs')}")
+    except Exception:
+        pass
     r = redis.from_url(REDIS_URL)
     active_instance: Optional[int] = None
     last_qlen = 0
@@ -326,7 +327,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     and run; returns 0 on success or non-zero on error.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--provision-mode", choices=["bootstrap", "template", "image"], help="Provision mode for instance creation (overrides PROVISION_MODE env)")
+    parser.add_argument("--provision-mode", choices=["image"], help="Provision mode for instance creation (overrides PROVISION_MODE env). Only 'image' is supported")
     parser.add_argument("--dry-print-create-body", action="store_true", help="Build and print a sample create body then exit (no API calls)")
     parser.add_argument("--ask-id", type=int, default=1, help="Ask ID to use when building sample create body")
     parser.add_argument("--label-suffix", type=str, default="dryrun", help="Label suffix for sample create body")
@@ -339,7 +340,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             PROVISION_MODE_ENV = args.provision_mode
 
         if args.dry_print_create_body:
-            body = vast_utils.build_create_body_for_mode(args.ask_id, args.label_suffix, None, PROVISION_MODE_ENV or 'bootstrap', ud_bytes=b"", image_arg=args.image)
+            # This controller is image-only. Build a create body for image mode.
+            body = vast_utils.build_create_body_for_mode(args.ask_id, args.label_suffix, None, 'image', ud_bytes=b"", image_arg=args.image)
             print(json.dumps(body, indent=2))
         else:
             controller_loop()

@@ -3,7 +3,7 @@ This project is a queue-driven transcription pipeline: a web API accepts audio u
 Overview
 - API: `api/app.py` (FastAPI) — accepts uploads (`/upload`), enqueues jobs to Redis (`transcript_jobs`), and serves results at `/transcript/{job_id}` and `/history`.
 - Agent: `agent/agent.py` — a GPU consumer that BLPOP's `transcript_jobs`, runs WhisperX and pyannote to transcribe with diarization and voiceprint, writes JSON results to `DATA_DIR` and persists with `rclone` when configured.
-- Controller: `vast_agent.vast_agent` (run with `python -m vast_agent.vast_agent`) — provisions Vast.ai instances using image-based provisioning when queue activity requires GPUs and destroys them when idle/stale.
+- Controller: `vast_agent.vast_agent` (run with `python -m vast_agent.vast_agent`) — provisions Vast.ai instances by image when queue activity requires GPUs and destroys them when idle/stale.
 
 Scripts catalog: see `scripts/CATALOG.md` for a classified list of repository scripts (ops / diagnostic / shared) and recommended actions.
 
@@ -28,19 +28,19 @@ Important environment variables (developer-focused)
 - QUEUE_NAME: Redis list name (default `transcript_jobs`)
 - DATA_DIR: where uploads and results are stored (default `/data`)
 - VAST_API_KEY: Vast.ai API key (for controller/harness)
-- VAST_IMAGE: Explicit provider image (used for image-based provisioning)
-- PROVISION_MODE: One of `image` — controller enforces image-only provisioning
+-- VAST_IMAGE: Explicit provider image (used by the controller)
+-- PROVISION_MODE: Deprecated. The controller enforces image-only provisioning; set `VAST_IMAGE` instead.
+- DOCKER_CONFIG_B64 / GITHUB_PAT: used by bootstrap user-data to pull private images when needed.
 - HF_TOKEN: HuggingFace token required for Pyannote diarization and embeddings.
 
-Provisioning mode
-- image (only): This controller supports a single image-based provisioning path. The create body includes an `image` field pointing to a container (for example a GHCR image) that the provider will run. Image-based provisioning is simpler and more reliable for GPU workloads when you package dependencies inside the image.
+Provisioning
+- image (supported): the controller requests instances by image. Publish a reproducible image (e.g. GHCR) and set `VAST_IMAGE`.
 
-Notes
-- If you previously relied on bootstrap/user-data or provider templates, migrate to building a reproducible container image and publishing it to a registry accessible from the Vast.ai hosts (for example, GHCR with a public tag or a registry that Vast hosts can reach).
+Note: template-based provisioning is deprecated and removed from the default controller path.
 
-- Quick developer commands
-- Dry-print a create body for inspection (no provider calls):
-  python -m vast_agent.vast_agent --dry-print-create-body
+Quick developer commands
+-- Dry-print a create body for inspection (no provider calls):
+  python -m vast_agent.vast_agent --dry-print-create-body --image ghcr.io/<org>/<repo>:tag
 - Run the controller locally (reads env):
   python -m vast_agent.vast_agent
 - Run the API server (dev):

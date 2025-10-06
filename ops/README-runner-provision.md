@@ -6,7 +6,7 @@ This file explains how to generate and test the GitHub Actions self-hosted runne
 
 Prerequisites
 - A GitHub Personal Access Token (`GITHUB_PAT`) with repository `actions:write` / `repo` or `repo:admin` permissions to create registration tokens.
-- Access to a test VM (or your Vast template that executes user-data on boot).
+- Access to a test VM (or a provider cloud-init/user-data delivery mechanism that executes user-data on boot).
 - The repository checked out (this file lives at `ops/README-runner-provision.md`).
 
 1) Generate user-data locally
@@ -35,7 +35,10 @@ ssh user@vm 'sudo bash /tmp/runner-user-data.sh'
 - The script will install the GitHub runner and register it with labels defined by `RUNNER_LABELS` (defaults to `self-hosted,cuda-test,transcript-coach`).
 
 4) Automated Vast test (if using `vast_agent`)
-- Ensure your Vast template runs an OnStart that decodes `RUNNER_USER_DATA_B64` and executes it, e.g.:
+- Prefer delivering a pointer to the user-data via `RUNNER_USER_DATA_URL`.
+- If your provider requires embedding, `RUNNER_USER_DATA_B64` is supported and will be decoded on the instance.
+
+Example (decode embedded user-data):
 
 ```sh
 echo "$RUNNER_USER_DATA_B64" | base64 -d > /tmp/runner-user-data.sh
@@ -43,7 +46,7 @@ chmod +x /tmp/runner-user-data.sh
 bash /tmp/runner-user-data.sh
 ```
 
-- Run `vast_agent` with `VAST_PROVISION_RUNNER=true` and valid `VAST_API_KEY` and `VAST_TEMPLATE_HASH`.
+Run `vast_agent` with `VAST_PROVISION_RUNNER=true` and a valid `VAST_API_KEY` and `VAST_IMAGE` (image mode preferred). Deliver user-data via `RUNNER_USER_DATA_URL` when possible or embed via `RUNNER_USER_DATA_B64` if necessary.
 
 Safety notes
 - The registration token is short-lived — provision immediately.

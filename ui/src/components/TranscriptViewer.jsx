@@ -23,6 +23,10 @@ function TranscriptViewer() {
       const data = await uploadFile(file);
       setJobId(data.job_id);
       setStatus("queued");
+      // store saved filename if API provided it (job uses saved_filename on server)
+      if (data.saved_filename) {
+        setResult({ _meta: { saved_filename: data.saved_filename } });
+      }
       pollStatus(data.job_id);
     } catch (err) {
       setError("Upload failed");
@@ -77,6 +81,11 @@ function TranscriptViewer() {
       {result && (
         <div className="mt-4">
           <h3 className="font-semibold">Transcript Result</h3>
+          <div className="text-sm text-gray-600 mb-2">
+            {result._meta && result._meta.saved_filename && (
+              <div>Saved filename: {result._meta.saved_filename}</div>
+            )}
+          </div>
           <pre className="bg-gray-100 p-2 rounded whitespace-pre-wrap">
             {JSON.stringify(result, null, 2)}
           </pre>

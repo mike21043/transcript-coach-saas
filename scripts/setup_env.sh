@@ -29,7 +29,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 read -p "Vast API key (VAST_API_KEY): " VAST_API_KEY
-read -p "Vast template hash (VAST_TEMPLATE_HASH): " VAST_TEMPLATE_HASH
+read -p "Vast image (VAST_IMAGE) e.g. ghcr.io/<org>/<repo>:tag: " VAST_IMAGE
+echo "(Note: this project enforces image-based provisioning; set VAST_IMAGE)"
 read -p "GitHub PAT (GITHUB_PAT) [will be stored locally, do not share]: " GITHUB_PAT
 read -p "GitHub owner (GITHUB_OWNER) [default: mike21043]: " GITHUB_OWNER
 read -p "Image repo (IMAGE_REPO) [default: transcript-coach-saas]: " IMAGE_REPO
@@ -39,7 +40,7 @@ IMAGE_REPO=${IMAGE_REPO:-transcript-coach-saas}
 
 cat > "$ENV_FILE" <<EOF
 VAST_API_KEY="$VAST_API_KEY"
-VAST_TEMPLATE_HASH="$VAST_TEMPLATE_HASH"
+VAST_IMAGE="$VAST_IMAGE"
 GITHUB_PAT="$GITHUB_PAT"
 GITHUB_OWNER="$GITHUB_OWNER"
 IMAGE_REPO="$IMAGE_REPO"

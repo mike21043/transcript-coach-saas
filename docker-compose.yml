@@ -14,9 +14,13 @@ services:
     volumes:
       - /root/transcript-coach-saas/data:/data
       - shared-data:/data/shared        # 👈 mount shared pCloud volume
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_URL=redis://redis:6379/0
+      - ADMIN_ALLOW_PROC_CONTROL=${ADMIN_ALLOW_PROC_CONTROL:-false}
+      # UI origin used by the API for CORS (defaults to the dev UI)
+      - UI_ORIGIN=${UI_ORIGIN:-http://38.242.200.197:3000}
     ports:
       - "8000:8000"
     depends_on:
@@ -56,7 +60,7 @@ services:
       # add these so vast_agent.py sees them
       - PUBLIC_REDIS_URL=${PUBLIC_REDIS_URL}
       - VAST_API_KEY=${VAST_API_KEY}
-      - VAST_TEMPLATE_HASH=${VAST_TEMPLATE_HASH}
+      - VAST_IMAGE=${VAST_IMAGE} # prefer VAST_IMAGE / provision-mode=image
 
       # optional tuning knobs (use your defaults if redis config is missing)
       - INSTANCE_DISK_GB=32

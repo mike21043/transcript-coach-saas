@@ -13,7 +13,7 @@ What it does
 
 Required environment variables for a real run (non-dry)
 - VAST_API_KEY
-- VAST_TEMPLATE_HASH
+- VAST_IMAGE (e.g. ghcr.io/<org>/<repo>:tag)
 - GITHUB_PAT (with repo actions runner registration permission)
 - Optionally: GITHUB_OWNER, IMAGE_REPO
 
@@ -31,10 +31,12 @@ Example (real run):
 
 ```bash
 export VAST_API_KEY=...
-export VAST_TEMPLATE_HASH=...
+export VAST_IMAGE=ghcr.io/<org>/<repo>:tag
 export GITHUB_PAT=...
 python3 scripts/e2e_provision_and_test.py
 ```
+
+Note: this harness uses image-based provisioning; provider-side template mode is deprecated and removed from the default flow.
 
 Caveats
 - Running the real script will incur charges on Vast for instance time.
@@ -63,9 +65,9 @@ Then export it before running a real harness run:
 ```bash
 export DOCKER_CONFIG_B64=$(cat docker_config.b64)
 export VAST_API_KEY=...
-export VAST_TEMPLATE_HASH=...
+export VAST_IMAGE=ghcr.io/<org>/<repo>:tag
 export GITHUB_PAT=...
-FORCE=1 ./scripts/run_e2e.sh --image ubuntu:22.04 --no-template
+FORCE=1 ./scripts/run_e2e.sh --image ubuntu:22.04
 ```
 
 If you prefer not to provide registry credentials, the harness will skip authenticated pulls and you

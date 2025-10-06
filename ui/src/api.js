@@ -45,3 +45,15 @@ export async function getResults() {
   }
   return response.json();
 }
+
+export async function getProcesses() {
+  const response = await fetch(`${API_BASE}/admin/processes`);
+  if (!response.ok) throw new Error('Failed to fetch processes');
+  return response.json();
+}
+
+export async function startProcess(procId) {
+  const response = await fetch(`${API_BASE}/admin/processes/${procId}/start`, { method: 'POST' });
+  if (!response.ok) throw new Error('Failed to start process');
+  return response.json();
+}
