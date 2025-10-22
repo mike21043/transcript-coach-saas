@@ -1,0 +1,35 @@
+name: probe-vast
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y dnsutils openssl curl
+
+      - name: DNS lookups (Google/Cloudflare)
+        run: |
+          echo 'dig @8.8.8.8 api.vast.ai'
+          dig +short @8.8.8.8 api.vast.ai || true
+          echo 'dig @1.1.1.1 api.vast.ai'
+          dig +short @1.1.1.1 api.vast.ai || true
+
+      - name: curl normal (DNS)
+        run: |
+          echo 'curl -v https://api.vast.ai/'
+          curl -v --max-time 20 https://api.vast.ai/ -I || true
+
+      - name: curl forced-resolve (IP 76.76.21.21)
+        run: |
+          echo 'curl -v --resolve api.vast.ai:443:76.76.21.21 https://api.vast.ai/'
+          curl -v --resolve api.vast.ai:443:76.76.21.21 https://api.vast.ai/ -I --max-time 20 || true
+
+      - name: openssl probe
+        run: |
+          echo 'openssl s_client -connect 76.76.21.21:443 -servername api.vast.ai'
+          echo QUIT | openssl s_client -connect 76.76.21.21:443 -servername api.vast.ai -brief || true
